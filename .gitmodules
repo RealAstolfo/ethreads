@@ -1,0 +1,3 @@
+[submodule "vendors/exstd"]
+	path = vendors/exstd
+	url = git@github.com:RealAstolfo/exstd.git
