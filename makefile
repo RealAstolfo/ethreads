@@ -33,7 +33,14 @@ threading-tester.o:
 threading-test: threading.o threading-tester.o
 	${CXX} ${CXXFLAGS} $^ -o $@
 
-all: threading-test
+#########################################################################################
+
+# Task Scheduler Static Library
+#########################################################################################
+threading.a: threading.o
+	${AR} rcs builds/$@ $^
+
+all: threading-test threading.a
 
 clean:
-	-rm -f threading-test *.exe *.a *.o
+	-rm -f threading-test builds/threading.a *.o
