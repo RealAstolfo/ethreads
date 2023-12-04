@@ -1,18 +1,16 @@
 #ifndef ETHREADS_TASK_SCHEDULER
 #define ETHREADS_TASK_SCHEDULER
 
-#include <algorithm>
 #include <atomic>
 #include <future>
-#include <iostream>
 #include <iterator>
 #include <memory>
 #include <thread>
 #include <utility>
 #include <vector>
 
-#include "ts_queue.hpp"
 #include "task.hpp"
+#include "ts_queue.hpp"
 
 /*
   The Userspace Threads "Fibers" rely on kernel threads, but avoid the expensive
