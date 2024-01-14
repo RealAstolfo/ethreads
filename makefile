@@ -6,10 +6,10 @@ AS = llvm-as
 RANLIB = llvm-ranlib
 
 
-INC = -I./include -Ivendors/exstd/include
+INC = -I./include -I./vendors/exstd/include
 
 LIB =  -L. -L/usr/lib64 -L/usr/local/lib64
-CFLAGS = -march=native -O3 -g -Wall -Wextra -Wno-missing-field-initializers -pedantic $(INC)
+CFLAGS = -march=native -O3 -pg -Wall -Wextra -pedantic $(INC)
 CXXFLAGS = $(CFLAGS) -std=c++20
 LDFLAGS = $(LIB) -O3
 
