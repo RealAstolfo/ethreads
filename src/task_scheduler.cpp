@@ -1,11 +1,13 @@
 #include <atomic>
+#include <chrono>
 #include <iostream>
 #include <memory>
+#include <ratio>
 #include <stddef.h>
 #include <thread>
 
-#include "ts_queue.hpp"
 #include "task_scheduler.hpp"
+#include "ts_queue.hpp"
 
 task_scheduler g_global_task_scheduler;
 thread_local std::size_t task_scheduler::cacheline_size;
@@ -46,7 +48,7 @@ inline std::size_t get_cache_line_size() {
 #elif defined(__linux__)
 #include <unistd.h>
 inline std::size_t get_cache_line_size() {
-  long result = 0;//sysconf(_SC_LEVEL1_DCACHE_LINESIZE);
+  long result = 0; // sysconf(_SC_LEVEL1_DCACHE_LINESIZE);
   if (result <= 0)
     result = 64; // Default value for x86 and x86-64 architectures
 
@@ -78,7 +80,8 @@ task_scheduler::task_scheduler() {
   while (processor_count-- > 1) {
     std::shared_ptr<ts_queue<task>> tsq = std::make_shared<ts_queue<task>>();
     std::thread thr(worker, tsq);
-    workers.push_back(std::make_pair(std::move(thr), std::move(tsq)));
+    workers.push_back(std::make_tuple(std::move(thr), std::move(tsq),
+                                      std::chrono::system_clock::now()));
   }
 
   cacheline_size = get_cache_line_size();
@@ -86,11 +89,11 @@ task_scheduler::task_scheduler() {
 
 task_scheduler::~task_scheduler() {
   for (auto &thr : workers) {
-    thr.second->push(
+    std::get<1>(thr)->push(
         []() { return 0; }); // Add an empty task to wake up the
                              // threads, for their demise of course.
   }
 
   for (auto &thr : workers)
-    thr.first.detach();
+    std::get<0>(thr).detach();
 }

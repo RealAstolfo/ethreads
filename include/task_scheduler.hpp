@@ -2,10 +2,15 @@
 #define ETHREADS_TASK_SCHEDULER
 
 #include <atomic>
+#include <chrono>
+#include <cstddef>
 #include <future>
 #include <iterator>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <thread>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -26,8 +31,12 @@
 using task = std::function<void()>;
 
 struct task_scheduler {
-  std::vector<std::pair<std::thread, std::shared_ptr<ts_queue<task>>>> workers;
-  std::atomic_size_t last = 0;
+  std::vector<std::tuple<std::thread, std::shared_ptr<ts_queue<task>>,
+                         std::chrono::system_clock::time_point>>
+      workers;
+  std::map<void *, std::chrono::duration<std::size_t, std::nano>> time_keep;
+  std::mutex access_mutex;
+
   static thread_local std::size_t cacheline_size;
 
   template <typename T, typename... Args>
@@ -66,11 +75,16 @@ template <typename T, typename... Args>
 std::future<std::invoke_result_t<T, Args...>>
 task_scheduler::add_task(T &&t, Args &&...args) {
   using result_type = std::invoke_result_t<T, Args...>;
+  using nanosec = std::chrono::duration<std::size_t, std::nano>;
   auto promise = std::make_shared<std::promise<result_type>>();
   std::future<result_type> future = promise->get_future();
   std::function<void()> task =
-      [promise, packaged = std::forward<T>(t),
+      [promise, time_vec = std::ref(time_keep),
+       access_mutex = std::ref(this->access_mutex),
+       packaged = std::forward<T>(t),
        args = std::make_tuple(std::forward<Args>(args)...)]() mutable {
+        auto start = std::chrono::high_resolution_clock::now();
+
         std::apply(
             [&](auto &&...expandedArgs) {
               if constexpr (std::is_void_v<result_type>) {
@@ -82,10 +96,36 @@ task_scheduler::add_task(T &&t, Args &&...args) {
               }
             },
             args);
+        auto stop = std::chrono::high_resolution_clock::now();
+        nanosec duration = stop - start;
+        {
+          std::lock_guard<std::mutex> lock(access_mutex);
+          auto &time_keep = time_vec.get();
+          time_keep[static_cast<void *>(&packaged)] = duration;
+        }
       };
-  workers[last++].second->push(task);
-  if (last >= workers.size())
-    last = 0;
+
+  auto now = std::chrono::system_clock::now();
+  {
+    std::lock_guard<std::mutex>(this->access_mutex);
+    auto *least_busy = &workers[0];
+    for (auto &worker : workers) {
+      auto &shared_queue = std::get<1>(worker);
+      auto &work_time = std::get<2>(worker);
+      if (now >= work_time) {
+        shared_queue->push(task);
+        work_time = now + time_keep[(void *)(&t)];
+        return future;
+      }
+
+      if (std::get<2>(*least_busy) > work_time)
+        least_busy = &worker;
+    }
+
+    std::get<1>(*least_busy)->push(task);
+    std::get<2>(*least_busy) = now + time_keep[(void *)(&t)];
+  }
+
   return future;
 }
 
