@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstddef>
 #include <future>
+#include <iostream>
 #include <iterator>
 #include <map>
 #include <memory>
@@ -78,9 +79,10 @@ task_scheduler::add_task(T &&t, Args &&...args) {
   using nanosec = std::chrono::duration<std::size_t, std::nano>;
   auto promise = std::make_shared<std::promise<result_type>>();
   std::future<result_type> future = promise->get_future();
+  const std::decay_t<T> t_ptr = &t;
   std::function<void()> task =
       [promise, time_vec = time_keep, access_mutex = std::ref(access_mutex),
-       packaged = std::forward<T>(t),
+       packaged = std::forward<T>(t), func_ptr = t_ptr,
        args = std::make_tuple(std::forward<Args>(args)...)]() mutable {
         auto start = std::chrono::high_resolution_clock::now();
 
@@ -100,7 +102,7 @@ task_scheduler::add_task(T &&t, Args &&...args) {
         {
           std::lock_guard<std::mutex> lock(access_mutex.get());
           auto &time_keep = time_vec;
-          time_keep[static_cast<void *>(&packaged)] = duration;
+          time_keep[(void *)func_ptr] = duration;
         }
       };
 
