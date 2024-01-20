@@ -32,9 +32,9 @@ using task = std::function<void()>;
 
 struct task_scheduler {
   std::vector<std::tuple<std::thread, std::shared_ptr<ts_queue<task>>,
-                         std::chrono::system_clock::time_point>>
+                         std::chrono::high_resolution_clock::time_point>>
       workers;
-  std::map<void *, std::chrono::duration<std::size_t, std::nano>> time_keep;
+  std::map<void *, std::chrono::nanoseconds> time_keep;
   std::mutex access_mutex;
 
   static thread_local std::size_t cacheline_size;
@@ -79,8 +79,7 @@ task_scheduler::add_task(T &&t, Args &&...args) {
   auto promise = std::make_shared<std::promise<result_type>>();
   std::future<result_type> future = promise->get_future();
   std::function<void()> task =
-      [promise, time_vec = std::ref(time_keep),
-       access_mutex = std::ref(this->access_mutex),
+      [promise, time_vec = time_keep, access_mutex = std::ref(access_mutex),
        packaged = std::forward<T>(t),
        args = std::make_tuple(std::forward<Args>(args)...)]() mutable {
         auto start = std::chrono::high_resolution_clock::now();
@@ -99,22 +98,22 @@ task_scheduler::add_task(T &&t, Args &&...args) {
         auto stop = std::chrono::high_resolution_clock::now();
         nanosec duration = stop - start;
         {
-          std::lock_guard<std::mutex> lock(access_mutex);
-          auto &time_keep = time_vec.get();
+          std::lock_guard<std::mutex> lock(access_mutex.get());
+          auto &time_keep = time_vec;
           time_keep[static_cast<void *>(&packaged)] = duration;
         }
       };
 
-  auto now = std::chrono::system_clock::now();
+  auto now = std::chrono::high_resolution_clock::now();
   {
-    std::lock_guard<std::mutex>(this->access_mutex);
+    std::lock_guard<std::mutex> lock(access_mutex);
     auto *least_busy = &workers[0];
     for (auto &worker : workers) {
-      auto shared_queue = std::get<1>(worker);
+      auto &shared_queue = std::get<1>(worker);
       auto &work_time = std::get<2>(worker);
       if (now >= work_time) {
         shared_queue->push(task);
-        work_time = now + time_keep[(void *)(&t)];
+        work_time = now + time_keep[(void *)&t];
         return future;
       }
 
@@ -123,7 +122,7 @@ task_scheduler::add_task(T &&t, Args &&...args) {
     }
 
     std::get<1>(*least_busy)->push(task);
-    std::get<2>(*least_busy) = now + time_keep[(void *)(&t)];
+    std::get<2>(*least_busy) = now + time_keep[(void *)&t];
   }
 
   return future;

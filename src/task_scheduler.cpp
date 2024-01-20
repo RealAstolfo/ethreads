@@ -80,8 +80,9 @@ task_scheduler::task_scheduler() {
   while (processor_count-- > 0) {
     std::shared_ptr<ts_queue<task>> tsq = std::make_shared<ts_queue<task>>();
     std::thread thr(worker, tsq);
-    workers.push_back(std::make_tuple(std::move(thr), std::move(tsq),
-                                      std::chrono::system_clock::now()));
+    workers.push_back(
+        std::make_tuple(std::move(thr), std::move(tsq),
+                        std::chrono::high_resolution_clock::now()));
   }
 
   cacheline_size = get_cache_line_size();
