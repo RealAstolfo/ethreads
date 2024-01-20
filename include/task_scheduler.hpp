@@ -110,7 +110,7 @@ task_scheduler::add_task(T &&t, Args &&...args) {
     std::lock_guard<std::mutex>(this->access_mutex);
     auto *least_busy = &workers[0];
     for (auto &worker : workers) {
-      auto &shared_queue = std::get<1>(worker);
+      auto shared_queue = std::get<1>(worker);
       auto &work_time = std::get<2>(worker);
       if (now >= work_time) {
         shared_queue->push(task);

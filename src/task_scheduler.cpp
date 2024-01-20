@@ -77,7 +77,7 @@ int worker(std::shared_ptr<ts_queue<task>> task_queue) {
 
 task_scheduler::task_scheduler() {
   size_t processor_count = std::thread::hardware_concurrency();
-  while (processor_count-- > 1) {
+  while (processor_count-- > 0) {
     std::shared_ptr<ts_queue<task>> tsq = std::make_shared<ts_queue<task>>();
     std::thread thr(worker, tsq);
     workers.push_back(std::make_tuple(std::move(thr), std::move(tsq),
