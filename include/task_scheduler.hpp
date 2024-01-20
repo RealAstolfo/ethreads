@@ -35,7 +35,7 @@ struct task_scheduler {
   std::vector<std::tuple<std::thread, std::shared_ptr<ts_queue<task>>,
                          std::chrono::high_resolution_clock::time_point>>
       workers;
-  std::map<void *, std::chrono::nanoseconds> time_keep;
+  std::vector<std::pair<void *, std::chrono::nanoseconds>> task_durations;
   std::mutex access_mutex;
 
   static thread_local std::size_t cacheline_size;
@@ -77,32 +77,42 @@ std::future<std::invoke_result_t<T, Args...>>
 task_scheduler::add_task(T &&t, Args &&...args) {
   using result_type = std::invoke_result_t<T, Args...>;
   using nanosec = std::chrono::duration<std::size_t, std::nano>;
+
   auto promise = std::make_shared<std::promise<result_type>>();
   std::future<result_type> future = promise->get_future();
-  const std::decay_t<T> t_ptr = &t;
+
+  std::function<result_type()> func =
+      std::bind(std::forward<T>(t), std::forward<Args>(args)...);
+  std::chrono::high_resolution_clock::duration task_duration;
+  for (auto &task_pair : task_durations)
+    if (task_pair.first == (void *)&t) {
+      task_duration = task_pair.second;
+      break;
+    }
+
   std::function<void()> task =
-      [promise, time_vec = time_keep, access_mutex = std::ref(access_mutex),
-       packaged = std::forward<T>(t), func_ptr = t_ptr,
-       args = std::make_tuple(std::forward<Args>(args)...)]() mutable {
+      [promise, func, t, task_durations = std::ref(this->task_durations),
+       access_mutex = std::ref(this->access_mutex)]() mutable {
         auto start = std::chrono::high_resolution_clock::now();
 
-        std::apply(
-            [&](auto &&...expandedArgs) {
-              if constexpr (std::is_void_v<result_type>) {
-                packaged(std::forward<decltype(expandedArgs)>(expandedArgs)...);
-                promise->set_value();
-              } else {
-                promise->set_value(packaged(
-                    std::forward<decltype(expandedArgs)>(expandedArgs)...));
-              }
-            },
-            args);
+        if constexpr (std::is_void_v<result_type>) {
+          func();
+          promise->set_value();
+        } else {
+          promise->set_value(func());
+        }
+
         auto stop = std::chrono::high_resolution_clock::now();
         nanosec duration = stop - start;
         {
           std::lock_guard<std::mutex> lock(access_mutex.get());
-          auto &time_keep = time_vec;
-          time_keep[(void *)func_ptr] = duration;
+          for (auto &task_duration : task_durations.get())
+            if (task_duration.first == (void *)&t) {
+              task_duration.second = duration;
+              return;
+            }
+
+          task_durations.get().emplace_back((void *)&t, duration);
         }
       };
 
@@ -115,7 +125,7 @@ task_scheduler::add_task(T &&t, Args &&...args) {
       auto &work_time = std::get<2>(worker);
       if (now >= work_time) {
         shared_queue->push(task);
-        work_time = now + time_keep[(void *)&t];
+        work_time = now + task_duration;
         return future;
       }
 
@@ -124,7 +134,8 @@ task_scheduler::add_task(T &&t, Args &&...args) {
     }
 
     std::get<1>(*least_busy)->push(task);
-    std::get<2>(*least_busy) = now + time_keep[(void *)&t];
+
+    std::get<2>(*least_busy) = now + task_duration;
   }
 
   return future;
