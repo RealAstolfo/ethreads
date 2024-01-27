@@ -85,7 +85,8 @@ task_scheduler::add_task(T &&t, Args &&...args) {
 
   std::function<result_type()> func =
       std::bind(std::forward<T>(t), std::forward<Args>(args)...);
-  std::chrono::high_resolution_clock::duration task_duration;
+  std::chrono::high_resolution_clock::duration task_duration =
+      std::chrono::high_resolution_clock::duration::zero();
   for (auto &task_pair : task_durations)
     if (task_pair.first == reinterpret_cast<std::uintptr_t>(&t)) {
       task_duration = task_pair.second;

@@ -1,9 +1,9 @@
-CC = clang
-CXX = clang++
-LD = ld.lld
-AR = llvm-ar
-AS = llvm-as
-RANLIB = llvm-ranlib
+CC = gcc
+CXX = g++
+LD = ld
+AR = ar
+AS = as
+RANLIB = ranlib
 
 
 INC = -I./include -I./vendors/exstd/include
