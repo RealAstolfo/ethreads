@@ -4,6 +4,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <future>
 #include <iostream>
 #include <iterator>
@@ -35,7 +36,8 @@ struct task_scheduler {
   std::vector<std::tuple<std::thread, std::shared_ptr<ts_queue<task>>,
                          std::chrono::high_resolution_clock::time_point>>
       workers;
-  std::vector<std::pair<void *, std::chrono::nanoseconds>> task_durations;
+  std::vector<std::pair<std::uintptr_t, std::chrono::nanoseconds>>
+      task_durations;
   std::mutex access_mutex;
 
   static thread_local std::size_t cacheline_size;
@@ -85,7 +87,7 @@ task_scheduler::add_task(T &&t, Args &&...args) {
       std::bind(std::forward<T>(t), std::forward<Args>(args)...);
   std::chrono::high_resolution_clock::duration task_duration;
   for (auto &task_pair : task_durations)
-    if (task_pair.first == (void *)&t) {
+    if (task_pair.first == reinterpret_cast<std::uintptr_t>(&t)) {
       task_duration = task_pair.second;
       break;
     }
@@ -107,12 +109,13 @@ task_scheduler::add_task(T &&t, Args &&...args) {
         {
           std::lock_guard<std::mutex> lock(access_mutex.get());
           for (auto &task_duration : task_durations.get())
-            if (task_duration.first == (void *)&t) {
+            if (task_duration.first == reinterpret_cast<std::uintptr_t>(&t)) {
               task_duration.second = duration;
               return;
             }
 
-          task_durations.get().emplace_back((void *)&t, duration);
+          task_durations.get().emplace_back(
+              reinterpret_cast<std::uintptr_t>(&t), duration);
         }
       };
 
