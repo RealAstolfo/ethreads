@@ -87,17 +87,17 @@ task_scheduler::add_task(T &&t, Args &&...args) {
       std::bind(std::forward<T>(t), std::forward<Args>(args)...);
   std::chrono::high_resolution_clock::duration task_duration =
       std::chrono::high_resolution_clock::duration::zero();
-  for (auto &task_pair : task_durations)
-    if (task_pair.first == reinterpret_cast<std::uintptr_t>(&t)) {
-      task_duration = task_pair.second;
+  for (auto &[task_ptr, duration] : task_durations)
+    if (task_ptr == reinterpret_cast<std::uintptr_t>(&t)) {
+      task_duration = duration;
       break;
     }
 
+  const std::uintptr_t func_ptr = reinterpret_cast<std::uintptr_t>(&t);
   std::function<void()> task =
-      [promise, func, t, task_durations = std::ref(this->task_durations),
+      [promise, func, func_ptr, task_durations = std::ref(this->task_durations),
        access_mutex = std::ref(this->access_mutex)]() mutable {
         auto start = std::chrono::high_resolution_clock::now();
-
         if constexpr (std::is_void_v<result_type>) {
           func();
           promise->set_value();
@@ -109,14 +109,14 @@ task_scheduler::add_task(T &&t, Args &&...args) {
         nanosec duration = stop - start;
         {
           std::lock_guard<std::mutex> lock(access_mutex.get());
-          for (auto &task_duration : task_durations.get())
-            if (task_duration.first == reinterpret_cast<std::uintptr_t>(&t)) {
-              task_duration.second = duration;
+          for (auto &[task_ptr, task_duration] : task_durations.get())
+            if (task_ptr == func_ptr) {
+              task_duration = duration;
               return;
             }
 
           task_durations.get().emplace_back(
-              reinterpret_cast<std::uintptr_t>(&t), duration);
+              reinterpret_cast<std::uintptr_t>(func_ptr), duration);
         }
       };
 
