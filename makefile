@@ -9,7 +9,7 @@ RANLIB = ranlib
 INC = -I./include -I./vendors/exstd/include
 
 LIB =  -L. -L/usr/lib64 -L/usr/local/lib64
-CFLAGS = -march=native -O3 -pg -Wall -Wextra -pedantic $(INC)
+CFLAGS = -march=native -O3 -p -Wall -Wextra -pedantic $(INC)
 CXXFLAGS = $(CFLAGS) -std=c++20
 LDFLAGS = $(LIB) -O3
 
