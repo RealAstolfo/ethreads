@@ -1,9 +1,5 @@
-CC = gcc
-CXX = g++
-LD = ld
-AR = ar
-AS = as
-RANLIB = ranlib
+CXX = zig c++
+AR = zig ar
 
 
 INC = -I./include -I./vendors/exstd/include
@@ -20,7 +16,7 @@ task-scheduler.o:
 	${CXX} ${CXXFLAGS} -c src/task_scheduler.cpp -o $@
 
 threading.o: task-scheduler.o
-	${LD} -r $^ -o $@
+	${CXX} ${CXXFLAGS} -c $^ -o $@
 
 #########################################################################################
 
