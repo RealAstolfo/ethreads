@@ -167,7 +167,7 @@ task_scheduler::add_batch_task(T &&t, Iterator &&start, Iterator &&stop,
   const std::size_t aligned_batch_size_bytes =
       aligned_batch_size * sizeof(*start);
   const std::size_t aligned_batch_size_elements =
-      aligned_batch_size_bytes / cache_line_size;
+      std::max(1ul, aligned_batch_size_bytes / cache_line_size);
   const std::size_t num_aligned_batches =
       total_items / aligned_batch_size_elements;
 
