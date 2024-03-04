@@ -12,6 +12,20 @@
 task_scheduler g_global_task_scheduler;
 thread_local std::size_t task_scheduler::cacheline_size;
 
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#include <features.h>
+#ifndef __USE_GNU
+#define __MUSL__
+#endif
+#undef _GNU_SOURCE
+#else
+#include <features.h>
+#ifndef __USE_GNU
+#define __MUSL__
+#endif
+#endif
+
 #ifdef _WIN32
 #ifdef __MINGW32__
 #warning "Unsupported target: Cache line size may not be accurately determined."
@@ -47,12 +61,17 @@ inline std::size_t get_cache_line_size() {
 #endif
 #elif defined(__linux__)
 #include <unistd.h>
+
 inline std::size_t get_cache_line_size() {
-  long result = 0; // sysconf(_SC_LEVEL1_DCACHE_LINESIZE);
+#if defined(__MUSL__)
+  return 64;
+#else
+  long result = sysconf(_SC_LEVEL1_DCACHE_LINESIZE);
   if (result <= 0)
     result = 64; // Default value for x86 and x86-64 architectures
 
   return static_cast<std::size_t>(result);
+#endif
 }
 #else
 #warning "Unsupported target: Cache line size may not be accurately determined."
