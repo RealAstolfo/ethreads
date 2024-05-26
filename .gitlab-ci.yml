@@ -24,7 +24,7 @@ build-job:       # This job runs in the build stage, which runs first.
   stage: build
   script:
     - apk update
-    - apk install zig make
+    - apk add zig make
     - echo "Compiling the code..."
     - make all
     - echo "Compile complete."
