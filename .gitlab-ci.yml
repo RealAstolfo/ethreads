@@ -24,7 +24,11 @@ build-job:       # This job runs in the build stage, which runs first.
   stage: build
   script:
     - apk update
-    - cat > /etc/apk/repositories << EOF; $(echo) && echo "https://dl-cdn.alpinelinux.org/alpine/v$(cut -d'.' -f1,2 /etc/alpine-release)/main/" && echo "https://dl-cdn.alpinelinux.org/alpine/v$(cut -d'.' -f1,2 /etc/alpine-release)/community/" && echo EOF
+    - >
+      cat > /etc/apk/repositories <<EOF
+      https://dl-cdn.alpinelinux.org/alpine/v$(cut -d'.' -f1,2 /etc/alpine-release)/main/
+      https://dl-cdn.alpinelinux.org/alpine/v$(cut -d'.' -f1,2 /etc/alpine-release)/community/
+      EOF
     - apk update
     - apk install zig make
     - echo "Compiling the code..."
