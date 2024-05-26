@@ -17,13 +17,12 @@
 # https://gitlab.com/gitlab-org/gitlab/-/blob/master/lib/gitlab/ci/templates/Getting-Started.gitlab-ci.yml
 
 stages:          # List of stages for jobs, and their order of execution
-  - prepare
   - build
   - test
 #  - deploy
 
 zig-job:
-  stage: prepare
+  stage: build
   script:
     - apk update
     - cat > /etc/apk/repositories << EOF; $(echo) && echo "https://dl-cdn.alpinelinux.org/alpine/v$(cut -d'.' -f1,2 /etc/alpine-release)/main/" && echo "https://dl-cdn.alpinelinux.org/alpine/v$(cut -d'.' -f1,2 /etc/alpine-release)/community/" && echo EOF
