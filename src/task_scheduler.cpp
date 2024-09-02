@@ -86,7 +86,7 @@ int worker(std::shared_ptr<ts_queue<task>> task_queue) {
                              // initialize it for all threads, that way
                              // add_batch_tasks works properly when called by
                              // non-main
-  while (!task_queue.unique()) {
+  while (task_queue.use_count() != 1) {
     if (auto task = task_queue->pop())
       (*task)();
   }
