@@ -34,7 +34,7 @@ threading-test: threading.o threading-tester.o
 # Task Scheduler Static Library
 #########################################################################################
 threading.a: threading.o
-	${AR} rcs builds/$@ $^
+	${AR} rcs $@ $^
 
 all: threading-test threading.a
 
