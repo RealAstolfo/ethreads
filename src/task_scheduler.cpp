@@ -94,6 +94,10 @@ void worker(std::shared_ptr<ts_queue<task>> task_queue,
   }
 }
 
+// Forward declarations from coro_scheduler.cpp
+void init_coro_workers(task_scheduler &scheduler);
+void shutdown_coro_workers(task_scheduler &scheduler);
+
 task_scheduler::task_scheduler() {
   size_t processor_count = std::thread::hardware_concurrency();
   while (processor_count-- > 0) {
@@ -105,11 +109,18 @@ task_scheduler::task_scheduler() {
   }
 
   cacheline_size = get_cache_line_size();
+
+  // Initialize coroutine workers
+  init_coro_workers(*this);
 }
 
 task_scheduler::~task_scheduler() {
   shutting_down.store(true, std::memory_order_relaxed);
 
+  // Shutdown coroutine workers first
+  shutdown_coro_workers(*this);
+
+  // Shutdown regular task workers
   for (auto &w : workers) {
     w.queue->push([]() {}); // Add an empty task to wake up threads
   }

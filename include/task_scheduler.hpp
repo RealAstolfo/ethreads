@@ -3,20 +3,25 @@
 
 #include <atomic>
 #include <chrono>
+#include <coroutine>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
+#include <functional>
 #include <future>
 #include <iterator>
 #include <memory>
 #include <mutex>
+#include <random>
 #include <thread>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
+#include "coro_task.hpp"
 #include "task.hpp"
 #include "ts_queue.hpp"
+#include "ws_deque.hpp"
 
 /*
   The Userspace Threads "Fibers" rely on kernel threads, but avoid the expensive
@@ -35,14 +40,36 @@ struct worker_info {
   std::chrono::high_resolution_clock::time_point available_at;
 };
 
+struct task_scheduler;
+
+// Coroutine worker info for work-stealing scheduler
+struct coro_worker_info {
+  std::thread thread;
+  std::shared_ptr<ethreads::ws_deque<std::coroutine_handle<>>> coro_queue;
+  std::size_t worker_id;
+  task_scheduler *scheduler;
+};
+
 struct task_scheduler {
+  // Existing task workers
   std::vector<worker_info> workers;
   std::unordered_map<std::uintptr_t, std::chrono::nanoseconds> task_durations;
   std::mutex access_mutex;
   std::atomic<bool> shutting_down{false};
 
-  static thread_local std::size_t cacheline_size;
+  // Coroutine workers with work-stealing
+  std::vector<coro_worker_info> coro_workers;
+  std::atomic<std::size_t> coro_worker_index{0};
 
+  // Global queue for external coroutine submissions (MPMC-safe)
+  std::shared_ptr<ts_queue<std::coroutine_handle<>>> external_coro_queue;
+
+  // Thread-local state for coroutine workers
+  static thread_local std::size_t cacheline_size;
+  static thread_local std::size_t current_coro_worker_id;
+  static thread_local bool is_coro_worker;
+
+  // Existing task API
   template <typename T, typename... Args>
   inline std::future<std::invoke_result_t<T, Args...>> add_task(T &&,
                                                                 Args &&...);
@@ -50,6 +77,21 @@ struct task_scheduler {
   template <typename T, typename Iterator, typename... Args>
   std::vector<std::future<std::invoke_result_t<T, Iterator, Iterator, Args...>>>
   add_batch_task(T &&t, Iterator &&start, Iterator &&stop, Args &&...args);
+
+  // Coroutine API
+  template <typename T>
+  ethreads::coro_task<T> add_coro(ethreads::coro_task<T> task);
+
+  template <typename Callable, typename... Args>
+    requires(!ethreads::is_coro_task_v<std::invoke_result_t<Callable, Args...>>)
+  auto add_coro(Callable &&callable, Args &&...args)
+      -> ethreads::coro_task<std::invoke_result_t<Callable, Args...>>;
+
+  // Schedule a coroutine handle on a worker
+  void schedule_coro_handle(std::coroutine_handle<> handle);
+
+  // Schedule a task on the regular task pool
+  void schedule_task(std::function<void()> task);
 
   task_scheduler();
   ~task_scheduler();
@@ -182,5 +224,72 @@ task_scheduler::add_batch_task(T &&t, Iterator &&start, Iterator &&stop,
 
   return futures;
 }
+
+// =============================================================================
+// Coroutine API Implementation
+// =============================================================================
+
+// Schedule an existing coro_task on workers (eagerly starts execution)
+template <typename T>
+ethreads::coro_task<T> task_scheduler::add_coro(ethreads::coro_task<T> task) {
+  // Mark as scheduled and start execution
+  task.start();
+  return std::move(task);
+}
+
+// Wrap a regular callable in a coroutine and schedule it
+template <typename Callable, typename... Args>
+  requires(!ethreads::is_coro_task_v<std::invoke_result_t<Callable, Args...>>)
+auto task_scheduler::add_coro(Callable &&callable, Args &&...args)
+    -> ethreads::coro_task<std::invoke_result_t<Callable, Args...>> {
+  using result_type = std::invoke_result_t<Callable, Args...>;
+
+  // Create a coroutine that wraps the callable
+  auto wrapper = [](Callable c, Args... a) -> ethreads::coro_task<result_type> {
+    if constexpr (std::is_void_v<result_type>) {
+      c(std::forward<Args>(a)...);
+      co_return;
+    } else {
+      co_return c(std::forward<Args>(a)...);
+    }
+  };
+
+  auto task = wrapper(std::forward<Callable>(callable),
+                      std::forward<Args>(args)...);
+  task.start();
+  return task;
+}
+
+// =============================================================================
+// Free Function Wrappers for Coroutine API
+// =============================================================================
+
+template <typename T>
+ethreads::coro_task<T> add_coro(ethreads::coro_task<T> task) {
+  return g_global_task_scheduler.add_coro(std::move(task));
+}
+
+template <typename Callable, typename... Args>
+  requires(!ethreads::is_coro_task_v<std::invoke_result_t<Callable, Args...>>)
+auto add_coro(Callable &&callable, Args &&...args) {
+  return g_global_task_scheduler.add_coro(std::forward<Callable>(callable),
+                                          std::forward<Args>(args)...);
+}
+
+// =============================================================================
+// Implementation for ethreads namespace functions (called from coro_task.hpp)
+// =============================================================================
+
+namespace ethreads {
+
+inline void schedule_coro_handle(std::coroutine_handle<> handle) {
+  g_global_task_scheduler.schedule_coro_handle(handle);
+}
+
+inline void schedule_task_on_pool(std::function<void()> task) {
+  g_global_task_scheduler.schedule_task(std::move(task));
+}
+
+} // namespace ethreads
 
 #endif
