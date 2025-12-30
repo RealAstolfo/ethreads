@@ -31,9 +31,8 @@ template <typename T> struct coro_shared_state {
       ready.store(true, std::memory_order_release);
     }
     cv.notify_all();
-    if (continuation) {
-      schedule_coro_handle(continuation);
-    }
+    // Note: continuation is resumed via final_awaiter symmetric transfer,
+    // not here. Scheduling here would cause double-resume.
   }
 
   void set_exception(std::exception_ptr e) {
@@ -43,9 +42,8 @@ template <typename T> struct coro_shared_state {
       ready.store(true, std::memory_order_release);
     }
     cv.notify_all();
-    if (continuation) {
-      schedule_coro_handle(continuation);
-    }
+    // Note: continuation is resumed via final_awaiter symmetric transfer,
+    // not here. Scheduling here would cause double-resume.
   }
 
   T get() {
@@ -74,9 +72,8 @@ template <> struct coro_shared_state<void> {
       ready.store(true, std::memory_order_release);
     }
     cv.notify_all();
-    if (continuation) {
-      schedule_coro_handle(continuation);
-    }
+    // Note: continuation is resumed via final_awaiter symmetric transfer,
+    // not here. Scheduling here would cause double-resume.
   }
 
   void set_exception(std::exception_ptr e) {
@@ -86,9 +83,8 @@ template <> struct coro_shared_state<void> {
       ready.store(true, std::memory_order_release);
     }
     cv.notify_all();
-    if (continuation) {
-      schedule_coro_handle(continuation);
-    }
+    // Note: continuation is resumed via final_awaiter symmetric transfer,
+    // not here. Scheduling here would cause double-resume.
   }
 
   void get() {

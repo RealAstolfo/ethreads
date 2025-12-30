@@ -18,7 +18,10 @@ task-scheduler.o:
 coro-scheduler.o:
 	${CXX} ${CXXFLAGS} -c src/coro_scheduler.cpp -o $@
 
-threading.o: task-scheduler.o coro-scheduler.o
+async-runtime.o:
+	${CXX} ${CXXFLAGS} -c src/async_runtime.cpp -o $@
+
+threading.o: task-scheduler.o coro-scheduler.o async-runtime.o
 	ld -r $^ -o $@
 
 #########################################################################################
@@ -56,12 +59,34 @@ fib-benchmark: threading.o fib-benchmark.o
 
 #########################################################################################
 
+# Async Runtime Testing
+#########################################################################################
+
+async-runtime-tester.o:
+	${CXX} ${CXXFLAGS} -c builds/test/async_runtime_test.cpp -o $@
+
+async-runtime-test: threading.o async-runtime-tester.o
+	${CXX} ${CXXFLAGS} $^ -o $@
+
+#########################################################################################
+
+# Fibonacci CORO_MAIN Example
+#########################################################################################
+
+fib-coro-main.o:
+	${CXX} ${CXXFLAGS} -c builds/test/fib_coro_main.cpp -o $@
+
+fib-coro-main: threading.o fib-coro-main.o
+	${CXX} ${CXXFLAGS} $^ -o $@
+
+#########################################################################################
+
 # Task Scheduler Static Library
 #########################################################################################
 threading.a: threading.o
 	${AR} rcs $@ $^
 
-all: threading-test coro-test fib-benchmark threading.a
+all: threading-test coro-test fib-benchmark async-runtime-test fib-coro-main threading.a
 
 clean:
-	-rm -f threading-test coro-test fib-benchmark builds/threading.a *.o
+	-rm -f threading-test coro-test fib-benchmark async-runtime-test builds/threading.a *.o
