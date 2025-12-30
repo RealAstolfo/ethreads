@@ -6,6 +6,7 @@
 #include <mutex>
 #include <vector>
 
+#include "task_scheduler.hpp"
 #include "coro_task.hpp"
 #include "yield.hpp"
 
