@@ -1,6 +1,5 @@
 #include <atomic>
 #include <chrono>
-#include <iostream>
 #include <memory>
 #include <ratio>
 #include <stddef.h>
@@ -8,6 +7,8 @@
 
 #include "task_scheduler.hpp"
 #include "ts_queue.hpp"
+
+constexpr std::size_t DEFAULT_CACHE_LINE_SIZE = 64;
 
 task_scheduler g_global_task_scheduler;
 thread_local std::size_t task_scheduler::cacheline_size;
@@ -30,9 +31,9 @@ thread_local std::size_t task_scheduler::cacheline_size;
 #ifdef __MINGW32__
 #warning "Unsupported target: Cache line size may not be accurately determined."
 inline std::size_t get_cache_line_size() {
-  return 64; // Default value for unsupported platforms or architectures
+  return DEFAULT_CACHE_LINE_SIZE;
 }
-#elif
+#else
 #include <Windows.h>
 inline std::size_t get_cache_line_size() {
   DWORD buffer_size = 0;
@@ -54,7 +55,7 @@ inline std::size_t get_cache_line_size() {
   }
 
   if (cache_line_size == 0)
-    cache_line_size = 64; // Default value for x86 and x86-64 architectures
+    cache_line_size = DEFAULT_CACHE_LINE_SIZE;
 
   return cache_line_size;
 }
@@ -64,11 +65,11 @@ inline std::size_t get_cache_line_size() {
 
 inline std::size_t get_cache_line_size() {
 #if defined(__MUSL__)
-  return 64;
+  return DEFAULT_CACHE_LINE_SIZE;
 #else
   long result = sysconf(_SC_LEVEL1_DCACHE_LINESIZE);
   if (result <= 0)
-    result = 64; // Default value for x86 and x86-64 architectures
+    result = DEFAULT_CACHE_LINE_SIZE;
 
   return static_cast<std::size_t>(result);
 #endif
@@ -76,44 +77,45 @@ inline std::size_t get_cache_line_size() {
 #else
 #warning "Unsupported target: Cache line size may not be accurately determined."
 inline std::size_t get_cache_line_size() {
-  return 64; // Default value for unsupported platforms or architectures
+  return DEFAULT_CACHE_LINE_SIZE;
 }
 #endif
 
-int worker(std::shared_ptr<ts_queue<task>> task_queue) {
+void worker(std::shared_ptr<ts_queue<task>> task_queue,
+            std::atomic<bool> &shutdown_flag) {
   task_scheduler::cacheline_size =
       get_cache_line_size(); // cacheline_size is thread_local, so we have to
                              // initialize it for all threads, that way
                              // add_batch_tasks works properly when called by
                              // non-main
-  while (task_queue.use_count() != 1) {
+  while (!shutdown_flag.load(std::memory_order_relaxed)) {
     if (auto task = task_queue->pop())
       (*task)();
   }
-
-  return 0;
 }
 
 task_scheduler::task_scheduler() {
   size_t processor_count = std::thread::hardware_concurrency();
   while (processor_count-- > 0) {
     std::shared_ptr<ts_queue<task>> tsq = std::make_shared<ts_queue<task>>();
-    std::thread thr(worker, tsq);
-    workers.push_back(
-        std::make_tuple(std::move(thr), std::move(tsq),
-                        std::chrono::high_resolution_clock::now()));
+    std::thread thr(worker, tsq, std::ref(shutting_down));
+    workers.push_back(worker_info{
+        std::move(thr), std::move(tsq),
+        std::chrono::high_resolution_clock::now()});
   }
 
   cacheline_size = get_cache_line_size();
 }
 
 task_scheduler::~task_scheduler() {
-  for (auto &thr : workers) {
-    std::get<1>(thr)->push(
-        []() { return 0; }); // Add an empty task to wake up the
-                             // threads, for their demise of course.
+  shutting_down.store(true, std::memory_order_relaxed);
+
+  for (auto &w : workers) {
+    w.queue->push([]() {}); // Add an empty task to wake up threads
   }
 
-  for (auto &thr : workers)
-    std::get<0>(thr).detach();
+  for (auto &w : workers) {
+    if (w.thread.joinable())
+      w.thread.join();
+  }
 }

@@ -1,18 +1,17 @@
-#ifndef ETHREADS_TASK_SCHEDULER
-#define ETHREADS_TASK_SCHEDULER
+#ifndef ETHREADS_TASK_SCHEDULER_HPP
+#define ETHREADS_TASK_SCHEDULER_HPP
 
 #include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <future>
-#include <iostream>
 #include <iterator>
-#include <map>
 #include <memory>
 #include <mutex>
 #include <thread>
-#include <tuple>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -30,15 +29,17 @@
   contained within low priority
 */
 
-using task = std::function<void()>;
+struct worker_info {
+  std::thread thread;
+  std::shared_ptr<ts_queue<task>> queue;
+  std::chrono::high_resolution_clock::time_point available_at;
+};
 
 struct task_scheduler {
-  std::vector<std::tuple<std::thread, std::shared_ptr<ts_queue<task>>,
-                         std::chrono::high_resolution_clock::time_point>>
-      workers;
-  std::vector<std::pair<std::uintptr_t, std::chrono::nanoseconds>>
-      task_durations;
+  std::vector<worker_info> workers;
+  std::unordered_map<std::uintptr_t, std::chrono::nanoseconds> task_durations;
   std::mutex access_mutex;
+  std::atomic<bool> shutting_down{false};
 
   static thread_local std::size_t cacheline_size;
 
@@ -87,59 +88,56 @@ task_scheduler::add_task(T &&t, Args &&...args) {
       std::bind(std::forward<T>(t), std::forward<Args>(args)...);
   std::chrono::high_resolution_clock::duration task_duration =
       std::chrono::high_resolution_clock::duration::zero();
-  for (auto &[task_ptr, duration] : task_durations)
-    if (task_ptr == reinterpret_cast<std::uintptr_t>(&t)) {
-      task_duration = duration;
-      break;
-    }
 
   const std::uintptr_t func_ptr = reinterpret_cast<std::uintptr_t>(&t);
-  std::function<void()> task =
+  if (auto it = task_durations.find(func_ptr); it != task_durations.end()) {
+    task_duration = it->second;
+  }
+
+  std::function<void()> wrapped_task =
       [promise, func, func_ptr, task_durations = std::ref(this->task_durations),
        access_mutex = std::ref(this->access_mutex)]() mutable {
         auto start = std::chrono::high_resolution_clock::now();
-        if constexpr (std::is_void_v<result_type>) {
-          func();
-          promise->set_value();
-        } else {
-          promise->set_value(func());
+        try {
+          if constexpr (std::is_void_v<result_type>) {
+            func();
+            promise->set_value();
+          } else {
+            promise->set_value(func());
+          }
+        } catch (...) {
+          promise->set_exception(std::current_exception());
         }
 
         auto stop = std::chrono::high_resolution_clock::now();
         nanosec duration = stop - start;
         {
           std::lock_guard<std::mutex> lock(access_mutex.get());
-          for (auto &[task_ptr, task_duration] : task_durations.get())
-            if (task_ptr == func_ptr) {
-              task_duration = duration;
-              return;
-            }
-
-          task_durations.get().emplace_back(
-              reinterpret_cast<std::uintptr_t>(func_ptr), duration);
+          task_durations.get()[func_ptr] = duration;
         }
       };
 
   auto now = std::chrono::high_resolution_clock::now();
   {
     std::lock_guard<std::mutex> lock(access_mutex);
-    auto *least_busy = &workers[0];
+    if (workers.empty()) {
+      return future;
+    }
+
+    worker_info *least_busy = &workers[0];
     for (auto &worker : workers) {
-      auto &shared_queue = std::get<1>(worker);
-      auto &work_time = std::get<2>(worker);
-      if (now >= work_time) {
-        shared_queue->push(task);
-        work_time = now + task_duration;
+      if (now >= worker.available_at) {
+        worker.queue->push(wrapped_task);
+        worker.available_at = now + task_duration;
         return future;
       }
 
-      if (std::get<2>(*least_busy) > work_time)
+      if (least_busy->available_at > worker.available_at)
         least_busy = &worker;
     }
 
-    std::get<1>(*least_busy)->push(task);
-
-    std::get<2>(*least_busy) = now + task_duration;
+    least_busy->queue->push(wrapped_task);
+    least_busy->available_at = now + task_duration;
   }
 
   return future;
