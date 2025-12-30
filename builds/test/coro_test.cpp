@@ -179,6 +179,58 @@ int main() {
     }
   }
 
+  // Test 9: Coroutine calling add_coro internally
+  std::cout << "Test 9: Coro spawning coros... ";
+  {
+    // A coroutine that spawns child coroutines using add_coro
+    auto spawning_coro = []() -> ethreads::coro_task<int> {
+      // Spawn multiple child coroutines from within this coroutine
+      auto c1 = add_coro([]() { return 10; });
+      auto c2 = add_coro([]() { return 20; });
+      auto c3 = add_coro([]() { return 30; });
+
+      // Wait for all children
+      int sum = c1.get() + c2.get() + c3.get();
+      co_return sum;
+    };
+
+    auto task = add_coro(spawning_coro());
+    int result = task.get();
+
+    if (result == 60) {
+      std::cout << "PASS" << std::endl;
+    } else {
+      std::cout << "FAIL (expected 60, got " << result << ")" << std::endl;
+      failures++;
+    }
+  }
+
+  // Test 10: Deeply nested coroutine spawning
+  std::cout << "Test 10: Deep coro nesting... ";
+  {
+    // Recursive coroutine that spawns children
+    std::function<ethreads::coro_task<int>(int)> recursive_coro;
+    recursive_coro = [&recursive_coro](int depth) -> ethreads::coro_task<int> {
+      if (depth <= 0) {
+        co_return 1;
+      }
+      // Spawn a child coroutine
+      auto child = add_coro(recursive_coro(depth - 1));
+      int child_result = child.get();
+      co_return child_result + 1;
+    };
+
+    auto task = add_coro(recursive_coro(5));
+    int result = task.get();
+
+    if (result == 6) { // 5 levels deep + base case
+      std::cout << "PASS" << std::endl;
+    } else {
+      std::cout << "FAIL (expected 6, got " << result << ")" << std::endl;
+      failures++;
+    }
+  }
+
   // Summary
   std::cout << std::endl;
   if (failures == 0) {

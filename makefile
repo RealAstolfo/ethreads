@@ -45,12 +45,23 @@ coro-test: threading.o coro-tester.o
 
 #########################################################################################
 
+# Fibonacci Benchmark
+#########################################################################################
+
+fib-benchmark.o:
+	${CXX} ${CXXFLAGS} -c builds/test/fib_benchmark.cpp -o $@
+
+fib-benchmark: threading.o fib-benchmark.o
+	${CXX} ${CXXFLAGS} $^ -o $@
+
+#########################################################################################
+
 # Task Scheduler Static Library
 #########################################################################################
 threading.a: threading.o
 	${AR} rcs $@ $^
 
-all: threading-test coro-test threading.a
+all: threading-test coro-test fib-benchmark threading.a
 
 clean:
-	-rm -f threading-test coro-test builds/threading.a *.o
+	-rm -f threading-test coro-test fib-benchmark builds/threading.a *.o
