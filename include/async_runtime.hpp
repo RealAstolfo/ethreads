@@ -46,6 +46,15 @@ public:
     // Task will be cleaned up when it completes and shared_ptr ref count drops
     // Store in detached list to prevent premature destruction
     std::lock_guard<std::mutex> lock(detached_mutex_);
+
+    // Auto-cleanup if list gets large (prevents unbounded growth)
+    if (detached_tasks_.size() > 100) {
+      detached_tasks_.erase(
+          std::remove_if(detached_tasks_.begin(), detached_tasks_.end(),
+                         [](auto &check) { return check(); }),
+          detached_tasks_.end());
+    }
+
     detached_tasks_.push_back([shared_task]() mutable {
       if (shared_task->is_ready()) {
         shared_task.reset();
