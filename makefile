@@ -9,6 +9,12 @@ CFLAGS = -march=native -O3 -g -Wall -Wextra -pedantic $(INC)
 CXXFLAGS = $(CFLAGS) -std=c++23
 LDFLAGS = $(LIB) -O3
 
+# Debug flags for Valgrind (no optimization for accurate line numbers)
+# Use g++ for debug builds since it's more widely available
+CXX_DEBUG = g++
+CFLAGS_DEBUG = -O0 -g3 -Wall -Wextra -pedantic $(INC)
+CXXFLAGS_DEBUG = $(CFLAGS_DEBUG) -std=c++23
+
 # Threading
 
 # TODO: Implement platform detection here
@@ -86,7 +92,54 @@ fib-coro-main: threading.o fib-coro-main.o
 threading.a: threading.o
 	${AR} rcs $@ $^
 
+#########################################################################################
+
+# Valgrind Debug Builds
+#########################################################################################
+
+task-scheduler-debug.o:
+	${CXX_DEBUG} ${CXXFLAGS_DEBUG} -c src/task_scheduler.cpp -o $@
+
+coro-scheduler-debug.o:
+	${CXX_DEBUG} ${CXXFLAGS_DEBUG} -c src/coro_scheduler.cpp -o $@
+
+async-runtime-debug.o:
+	${CXX_DEBUG} ${CXXFLAGS_DEBUG} -c src/async_runtime.cpp -o $@
+
+threading-debug.o: task-scheduler-debug.o coro-scheduler-debug.o async-runtime-debug.o
+	ld -r $^ -o $@
+
+threading-tester-debug.o:
+	${CXX_DEBUG} ${CXXFLAGS_DEBUG} -c builds/test/threading_tester.cpp -o $@
+
+coro-tester-debug.o:
+	${CXX_DEBUG} ${CXXFLAGS_DEBUG} -c builds/test/coro_test.cpp -o $@
+
+async-runtime-tester-debug.o:
+	${CXX_DEBUG} ${CXXFLAGS_DEBUG} -c builds/test/async_runtime_test.cpp -o $@
+
+threading-test-valgrind: threading-debug.o threading-tester-debug.o
+	${CXX_DEBUG} ${CXXFLAGS_DEBUG} $^ -o $@
+
+coro-test-valgrind: threading-debug.o coro-tester-debug.o
+	${CXX_DEBUG} ${CXXFLAGS_DEBUG} $^ -o $@
+
+async-runtime-test-valgrind: threading-debug.o async-runtime-tester-debug.o
+	${CXX_DEBUG} ${CXXFLAGS_DEBUG} $^ -o $@
+
+valgrind-all: threading-test-valgrind coro-test-valgrind async-runtime-test-valgrind
+
+helgrind-threading: threading-test-valgrind
+	valgrind --tool=helgrind --suppressions=valgrind.supp ./threading-test-valgrind
+
+helgrind-coro: coro-test-valgrind
+	valgrind --tool=helgrind --suppressions=valgrind.supp ./coro-test-valgrind
+
+helgrind-async: async-runtime-test-valgrind
+	valgrind --tool=helgrind --suppressions=valgrind.supp ./async-runtime-test-valgrind
+
 all: threading-test coro-test fib-benchmark async-runtime-test fib-coro-main threading.a
 
 clean:
 	-rm -f threading-test coro-test fib-benchmark async-runtime-test builds/threading.a *.o
+	-rm -f threading-test-valgrind coro-test-valgrind async-runtime-test-valgrind

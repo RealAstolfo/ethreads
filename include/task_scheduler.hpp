@@ -128,13 +128,8 @@ task_scheduler::add_task(T &&t, Args &&...args) {
 
   std::function<result_type()> func =
       std::bind(std::forward<T>(t), std::forward<Args>(args)...);
-  std::chrono::high_resolution_clock::duration task_duration =
-      std::chrono::high_resolution_clock::duration::zero();
 
   const std::uintptr_t func_ptr = reinterpret_cast<std::uintptr_t>(&t);
-  if (auto it = task_durations.find(func_ptr); it != task_durations.end()) {
-    task_duration = it->second;
-  }
 
   std::function<void()> wrapped_task =
       [promise, func, func_ptr, task_durations = std::ref(this->task_durations),
@@ -162,6 +157,14 @@ task_scheduler::add_task(T &&t, Args &&...args) {
   auto now = std::chrono::high_resolution_clock::now();
   {
     std::lock_guard<std::mutex> lock(access_mutex);
+
+    // Look up task duration inside the lock to avoid race with worker updates
+    std::chrono::high_resolution_clock::duration task_duration =
+        std::chrono::high_resolution_clock::duration::zero();
+    if (auto it = task_durations.find(func_ptr); it != task_durations.end()) {
+      task_duration = it->second;
+    }
+
     if (workers.empty()) {
       return future;
     }

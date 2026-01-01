@@ -8,6 +8,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <thread>
 #include <utility>
 #include <variant>
 
@@ -20,6 +21,7 @@ void schedule_coro_handle(std::coroutine_handle<> handle);
 template <typename T> struct coro_shared_state {
   std::variant<std::monostate, T, std::exception_ptr> result;
   std::atomic<bool> ready{false};
+  std::atomic<bool> final_suspend_reached{false};
   std::coroutine_handle<> continuation{nullptr};
   std::mutex mutex;
   std::condition_variable cv;
@@ -62,6 +64,7 @@ template <typename T> struct coro_shared_state {
 template <> struct coro_shared_state<void> {
   std::optional<std::exception_ptr> exception;
   std::atomic<bool> ready{false};
+  std::atomic<bool> final_suspend_reached{false};
   std::coroutine_handle<> continuation{nullptr};
   std::mutex mutex;
   std::condition_variable cv;
@@ -120,6 +123,9 @@ public:
       std::coroutine_handle<>
       await_suspend(std::coroutine_handle<promise_type> h) noexcept {
         auto &promise = h.promise();
+        // Signal that we've reached final_suspend before transferring control
+        promise.state->final_suspend_reached.store(true,
+                                                   std::memory_order_release);
         if (promise.state->continuation) {
           return promise.state->continuation;
         }
@@ -165,9 +171,14 @@ public:
       if (state_ && !state_->is_ready()) {
         state_->get(); // Block until done
       }
-      if (handle_.done()) {
-        handle_.destroy();
+      // After state is ready, the coroutine may still be between set_value()
+      // and final_suspend(). Wait for final_suspend to be reached.
+      if (state_) {
+        while (!state_->final_suspend_reached.load(std::memory_order_acquire)) {
+          std::this_thread::yield();
+        }
       }
+      handle_.destroy();
     }
   }
 
@@ -241,6 +252,9 @@ public:
       std::coroutine_handle<>
       await_suspend(std::coroutine_handle<promise_type> h) noexcept {
         auto &promise = h.promise();
+        // Signal that we've reached final_suspend before transferring control
+        promise.state->final_suspend_reached.store(true,
+                                                   std::memory_order_release);
         if (promise.state->continuation) {
           return promise.state->continuation;
         }
@@ -285,9 +299,14 @@ public:
       if (state_ && !state_->is_ready()) {
         state_->get(); // Block until done
       }
-      if (handle_.done()) {
-        handle_.destroy();
+      // After state is ready, the coroutine may still be between set_value()
+      // and final_suspend(). Wait for final_suspend to be reached.
+      if (state_) {
+        while (!state_->final_suspend_reached.load(std::memory_order_acquire)) {
+          std::this_thread::yield();
+        }
       }
+      handle_.destroy();
     }
   }
 
