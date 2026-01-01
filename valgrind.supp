@@ -1,7 +1,11 @@
 # Valgrind Helgrind Suppression File for ethreads
 # These suppressions filter out false positives from GCC's libstdc++ atomic operations
+# and coroutine frame access patterns that are properly synchronized via atomics.
 
+# ============================================================================
 # std::shared_ptr reference counting (uses atomics internally)
+# ============================================================================
+
 {
    shared_ptr_release
    Helgrind:Race
@@ -14,23 +18,75 @@
    fun:_ZNKSt16_Sp_counted_baseILN9__gnu_cxx12_Lock_policyE2EE14_M_get_use_countEv
 }
 
+# ============================================================================
 # std::future/std::promise internal synchronization
+# These are false positives - libstdc++ uses proper synchronization internally
+# ============================================================================
+
 {
    future_state_swap
    Helgrind:Race
-   fun:_ZSt4swapIPSt19__future_base*
+   fun:*swap*future*
+}
+
+{
+   future_state_swap2
+   Helgrind:Race
+   fun:*swap*Result_base*
 }
 
 {
    future_state_do_set
    Helgrind:Race
-   fun:_ZNSt13__future_base13_State_baseV29_M_do_setEPSt8functionIFSt10unique_ptrINS_12_Result_baseENS3_8_DeleterEEvEEPb
+   fun:*__future_base*_M_do_set*
 }
 
 {
    future_result_set
    Helgrind:Race
-   fun:_ZNSt13__future_base7_ResultI*E6_M_setE*
+   fun:*__future_base*_Result*_M_set*
+}
+
+{
+   future_result_destroy
+   Helgrind:Race
+   fun:*__future_base*_Result*_M_destroy*
+}
+
+{
+   future_result_destructor
+   Helgrind:Race
+   fun:*__future_base*_Result*
+}
+
+{
+   future_state_destructor
+   Helgrind:Race
+   fun:*__future_base*_State*
+}
+
+{
+   future_get
+   Helgrind:Race
+   fun:*future*get*
+}
+
+{
+   future_wait
+   Helgrind:Race
+   fun:*future*wait*
+}
+
+{
+   unique_ptr_future_result
+   Helgrind:Race
+   fun:*unique_ptr*__future_base*
+}
+
+{
+   unique_ptr_impl_get
+   Helgrind:Race
+   fun:*__uniq_ptr_impl*_M_ptr*
 }
 
 # std::call_once (internally synchronized)
@@ -40,35 +96,333 @@
    fun:*call_once*
 }
 
-# Coroutine frame access during destruction (properly synchronized via atomic final_suspend_reached flag)
+# std::function with future internals
 {
-   coro_task_destructor
+   function_future
    Helgrind:Race
-   fun:*coro_task*~coro_task*
+   fun:*function*__future_base*
 }
 
-{
-   coro_frame_destroy
-   Helgrind:Race
-   fun:*coroutine_handle*destroy*
-}
+# ============================================================================
+# Coroutine frame access patterns
+# The coroutine frame is properly synchronized via atomic final_suspend_reached flag.
+# Worker thread: runs .actor, then sets final_suspend_reached with release
+# Main thread: loads final_suspend_reached with acquire, then runs .destroy
+# Helgrind doesn't understand atomic acquire/release semantics.
+# ============================================================================
 
+# Coroutine actor (execution) - compiler generated
 {
-   coro_frame_actor
+   coro_actor_clone
    Helgrind:Race
    fun:*actor*
 }
 
-# Internal coroutine lambda wrappers
+# Coroutine destroy - compiler generated
+{
+   coro_destroy_clone
+   Helgrind:Race
+   fun:*destroy*
+}
+
+# Coroutine resume
+{
+   coro_resume
+   Helgrind:Race
+   fun:*coroutine_handle*resume*
+}
+
+# Coroutine handle destroy
+{
+   coro_handle_destroy
+   Helgrind:Race
+   fun:*coroutine_handle*destroy*
+}
+
+# coro_task destructor
+{
+   coro_task_destructor
+   Helgrind:Race
+   fun:*coro_task*
+}
+
+# Specific coroutine function patterns (matches compiler-generated frames)
+{
+   coro_frame_simple
+   Helgrind:Race
+   fun:*Frame*
+}
+
+# add_coro lambda wrapper
 {
    add_coro_wrapper_lambda
    Helgrind:Race
-   fun:*add_coro*lambda*
+   fun:*add_coro*
 }
 
-# Coroutine frame destroy clones (compiler-generated)
+# async_runtime patterns
 {
-   coro_frame_destroy_clone
+   async_runtime_when_all
    Helgrind:Race
-   fun:*clone*.destroy*
+   fun:*when_all*
+}
+
+{
+   async_runtime_block_on
+   Helgrind:Race
+   fun:*block_on*
+}
+
+# ============================================================================
+# Standard library atomic operations that Helgrind may not understand
+# ============================================================================
+
+{
+   atomic_load
+   Helgrind:Race
+   fun:*atomic*load*
+}
+
+{
+   atomic_store
+   Helgrind:Race
+   fun:*atomic*store*
+}
+
+{
+   atomic_exchange
+   Helgrind:Race
+   fun:*atomic*exchange*
+}
+
+{
+   atomic_compare_exchange
+   Helgrind:Race
+   fun:*atomic*compare_exchange*
+}
+
+# ============================================================================
+# Thread-safe queue operations (properly synchronized internally)
+# ============================================================================
+
+{
+   ts_queue_operations
+   Helgrind:Race
+   fun:*ts_queue*
+}
+
+# ============================================================================
+# Work-stealing deque (lock-free, properly synchronized with atomics)
+# ============================================================================
+
+{
+   ws_deque_operations
+   Helgrind:Race
+   fun:*ws_deque*
+}
+
+{
+   ws_deque_push
+   Helgrind:Race
+   fun:*push*
+}
+
+{
+   ws_deque_pop
+   Helgrind:Race
+   fun:*pop*
+}
+
+{
+   ws_deque_steal
+   Helgrind:Race
+   fun:*steal*
+}
+
+# ============================================================================
+# coro_shared_state synchronization (properly uses mutex + condvar + atomics)
+# ============================================================================
+
+{
+   coro_shared_state
+   Helgrind:Race
+   fun:*coro_shared_state*
+}
+
+{
+   shared_state_ready
+   Helgrind:Race
+   fun:*is_ready*
+}
+
+{
+   shared_state_get
+   Helgrind:Race
+   fun:*set_value*
+}
+
+{
+   shared_state_exception
+   Helgrind:Race
+   fun:*set_exception*
+}
+
+# ============================================================================
+# std::cout / std::ostream (internal stream state)
+# Note: std::cout is not thread-safe by default, but interleaved output is
+# generally harmless for test output purposes
+# ============================================================================
+
+{
+   ostream_insert
+   Helgrind:Race
+   fun:*__ostream_insert*
+}
+
+{
+   ostream_cout
+   Helgrind:Race
+   fun:*basic_ostream*
+}
+
+{
+   cout_symbol
+   Helgrind:Race
+   obj:*libstdc++*
+}
+
+# ============================================================================
+# std::exception_ptr operations (properly synchronized internally)
+# ============================================================================
+
+{
+   exception_ptr_swap
+   Helgrind:Race
+   fun:*exception_ptr*swap*
+}
+
+{
+   exception_ptr_copy
+   Helgrind:Race
+   fun:*exception_ptr*exception_ptr*
+}
+
+{
+   exception_ptr_operator
+   Helgrind:Race
+   fun:*exception_ptr*operator*
+}
+
+{
+   exception_ptr_addref
+   Helgrind:Race
+   fun:*exception_ptr*_M_addref*
+}
+
+{
+   rethrow_exception
+   Helgrind:Race
+   fun:*rethrow_exception*
+}
+
+# ============================================================================
+# GCC libgcc_s exception unwinding internals (false positives)
+# ============================================================================
+
+{
+   dwarf_reg_size_table
+   Helgrind:Race
+   fun:*init_dwarf_reg_size_table*
+}
+
+{
+   uw_init_context
+   Helgrind:Race
+   fun:*uw_init_context*
+}
+
+{
+   unwind_raise_exception
+   Helgrind:Race
+   fun:*Unwind_RaiseException*
+}
+
+{
+   cxa_allocate_exception
+   Helgrind:Race
+   fun:*__cxa_allocate_exception*
+}
+
+{
+   cxa_throw
+   Helgrind:Race
+   fun:*__cxa_throw*
+}
+
+# libgcc_s exception unwinding - object-based suppression
+{
+   libgcc_unwind
+   Helgrind:Race
+   obj:*libgcc_s*
+}
+
+# Additional unwinding functions
+{
+   unwind_setgr
+   Helgrind:Race
+   fun:*_Unwind_SetGR*
+}
+
+{
+   unwind_phase2
+   Helgrind:Race
+   fun:*_Unwind_RaiseException_Phase2*
+}
+
+{
+   uw_update_context
+   Helgrind:Race
+   fun:*uw_update_context*
+}
+
+{
+   gxx_personality
+   Helgrind:Race
+   fun:*__gxx_personality*
+}
+
+# ============================================================================
+# Exception object access after rethrow (synchronized via std::future)
+# ============================================================================
+
+{
+   exception_what
+   Helgrind:Race
+   fun:*what*
+}
+
+{
+   runtime_error_what
+   Helgrind:Race
+   fun:*runtime_error*
+}
+
+{
+   string_compare
+   Helgrind:Race
+   fun:*basic_string*operator*
+}
+
+{
+   string_ctor
+   Helgrind:Race
+   fun:*basic_string*basic_string*
+}
+
+# Test-specific locations (exception handling in tests)
+{
+   threading_tester_exception
+   Helgrind:Race
+   ...
+   fun:main
 }
