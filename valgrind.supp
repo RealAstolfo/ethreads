@@ -1,0 +1,74 @@
+# Valgrind Helgrind Suppression File for ethreads
+# These suppressions filter out false positives from GCC's libstdc++ atomic operations
+
+# std::shared_ptr reference counting (uses atomics internally)
+{
+   shared_ptr_release
+   Helgrind:Race
+   fun:_ZNSt16_Sp_counted_baseILN9__gnu_cxx12_Lock_policyE2EE10_M_releaseEv
+}
+
+{
+   shared_ptr_use_count
+   Helgrind:Race
+   fun:_ZNKSt16_Sp_counted_baseILN9__gnu_cxx12_Lock_policyE2EE14_M_get_use_countEv
+}
+
+# std::future/std::promise internal synchronization
+{
+   future_state_swap
+   Helgrind:Race
+   fun:_ZSt4swapIPSt19__future_base*
+}
+
+{
+   future_state_do_set
+   Helgrind:Race
+   fun:_ZNSt13__future_base13_State_baseV29_M_do_setEPSt8functionIFSt10unique_ptrINS_12_Result_baseENS3_8_DeleterEEvEEPb
+}
+
+{
+   future_result_set
+   Helgrind:Race
+   fun:_ZNSt13__future_base7_ResultI*E6_M_setE*
+}
+
+# std::call_once (internally synchronized)
+{
+   call_once_internal
+   Helgrind:Race
+   fun:*call_once*
+}
+
+# Coroutine frame access during destruction (properly synchronized via atomic final_suspend_reached flag)
+{
+   coro_task_destructor
+   Helgrind:Race
+   fun:*coro_task*~coro_task*
+}
+
+{
+   coro_frame_destroy
+   Helgrind:Race
+   fun:*coroutine_handle*destroy*
+}
+
+{
+   coro_frame_actor
+   Helgrind:Race
+   fun:*actor*
+}
+
+# Internal coroutine lambda wrappers
+{
+   add_coro_wrapper_lambda
+   Helgrind:Race
+   fun:*add_coro*lambda*
+}
+
+# Coroutine frame destroy clones (compiler-generated)
+{
+   coro_frame_destroy_clone
+   Helgrind:Race
+   fun:*clone*.destroy*
+}

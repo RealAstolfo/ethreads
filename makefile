@@ -87,6 +87,17 @@ fib-coro-main: threading.o fib-coro-main.o
 
 #########################################################################################
 
+# Shared State Library Testing
+#########################################################################################
+
+shared-state-tester.o:
+	${CXX} ${CXXFLAGS} -c builds/test/shared_state_test.cpp -o $@
+
+shared-state-test: threading.o shared-state-tester.o
+	${CXX} ${CXXFLAGS} $^ -o $@
+
+#########################################################################################
+
 # Task Scheduler Static Library
 #########################################################################################
 threading.a: threading.o
@@ -138,8 +149,8 @@ helgrind-coro: coro-test-valgrind
 helgrind-async: async-runtime-test-valgrind
 	valgrind --tool=helgrind --suppressions=valgrind.supp ./async-runtime-test-valgrind
 
-all: threading-test coro-test fib-benchmark async-runtime-test fib-coro-main threading.a
+all: threading-test coro-test fib-benchmark async-runtime-test fib-coro-main shared-state-test threading.a
 
 clean:
-	-rm -f threading-test coro-test fib-benchmark async-runtime-test builds/threading.a *.o
-	-rm -f threading-test-valgrind coro-test-valgrind async-runtime-test-valgrind
+	-rm -f threading-test coro-test fib-benchmark async-runtime-test shared-state-test builds/threading.a *.o
+	-rm -f threading-test-valgrind coro-test-valgrind async-runtime-test-valgrind fib-coro-main
