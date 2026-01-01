@@ -1,8 +1,10 @@
 #ifndef ETHREADS_SHARED_STATE_CONCEPTS_HPP
 #define ETHREADS_SHARED_STATE_CONCEPTS_HPP
 
+#include <atomic>
 #include <concepts>
 #include <coroutine>
+#include <optional>
 #include <type_traits>
 
 namespace ethreads {
