@@ -4,6 +4,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <coroutine>
+#include <exception>
 #include <mutex>
 #include <optional>
 #include <utility>

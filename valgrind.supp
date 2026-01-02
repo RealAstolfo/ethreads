@@ -426,3 +426,43 @@
    ...
    fun:main
 }
+
+# ============================================================================
+# glibc pthread_cond_clockwait internal signaling (false positive)
+# glibc's condition variable implementation may internally signal as part of
+# the wait process (e.g., during timeout handling or futex queue management).
+# This is not a bug in user code - the lock is held by the calling thread
+# during wait_for/wait_until calls as required by the C++ standard.
+# ============================================================================
+
+{
+   pthread_cond_clockwait_internal_signal
+   Helgrind:Misc
+   fun:pthread_cond_signal_WRK
+   ...
+   fun:pthread_cond_clockwait*
+}
+
+{
+   pthread_cond_timedwait_internal_signal
+   Helgrind:Misc
+   fun:pthread_cond_signal_WRK
+   ...
+   fun:pthread_cond_timedwait*
+}
+
+{
+   pthread_cond_wait_internal_signal
+   Helgrind:Misc
+   fun:pthread_cond_signal_WRK
+   ...
+   fun:pthread_cond_wait*
+}
+
+{
+   pthread_cond_broadcast_in_wait
+   Helgrind:Misc
+   fun:pthread_cond_broadcast_WRK
+   ...
+   fun:pthread_cond_*wait*
+}
