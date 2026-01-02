@@ -32,7 +32,7 @@ static void coro_worker(coro_worker_info &info) {
     }
 
     // 2. Check external queue (submissions from non-worker threads)
-    if (auto handle = external_queue.pop()) {
+    if (auto handle = external_queue.try_receive()) {
       if (*handle && *handle != std::noop_coroutine() && !handle->done()) {
         handle->resume();
       }
@@ -94,7 +94,7 @@ void task_scheduler::schedule_coro_handle(std::coroutine_handle<> handle) {
   // it just scheduled - if we pushed to our own local queue, we'd block
   // waiting for work that's in our own queue.
   // The local queue is used for work-stealing and continuations only.
-  external_coro_queue->push(handle);
+  external_coro_queue->send(handle);
 }
 
 // Schedule a regular task on the task pool
@@ -112,14 +112,14 @@ void task_scheduler::schedule_task(std::function<void()> task) {
   worker_info *least_busy = &workers[0];
   for (auto &worker : workers) {
     if (now >= worker.available_at) {
-      worker.queue->push(std::move(task));
+      worker.queue->send(std::move(task));
       return;
     }
     if (least_busy->available_at > worker.available_at)
       least_busy = &worker;
   }
 
-  least_busy->queue->push(std::move(task));
+  least_busy->queue->send(std::move(task));
 }
 
 // Initialize coroutine workers (called from task_scheduler constructor)
@@ -128,7 +128,7 @@ void init_coro_workers(task_scheduler &scheduler) {
 
   // Create the external submission queue
   scheduler.external_coro_queue =
-      std::make_shared<ts_queue<std::coroutine_handle<>>>();
+      std::make_shared<ethreads::channel<std::coroutine_handle<>>>();
 
   scheduler.coro_workers.reserve(num_workers);
 
@@ -157,11 +157,8 @@ void shutdown_coro_workers(task_scheduler &scheduler) {
   // Give workers a moment to notice shutdown
   std::this_thread::yield();
 
-  // Push dummy handles to wake up workers that might be waiting
-  // Push to external queue so workers checking it will wake up
-  for (std::size_t i = 0; i < scheduler.coro_workers.size(); ++i) {
-    scheduler.external_coro_queue->push(std::noop_coroutine());
-  }
+  // Close the external queue to wake up any blocked workers
+  scheduler.external_coro_queue->close();
 
   // Join all threads
   for (auto &w : scheduler.coro_workers) {

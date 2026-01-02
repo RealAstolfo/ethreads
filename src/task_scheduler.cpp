@@ -6,7 +6,6 @@
 #include <thread>
 
 #include "task_scheduler.hpp"
-#include "ts_queue.hpp"
 
 constexpr std::size_t DEFAULT_CACHE_LINE_SIZE = 64;
 
@@ -81,7 +80,7 @@ inline std::size_t get_cache_line_size() {
 }
 #endif
 
-void worker(std::shared_ptr<ts_queue<task>> task_queue,
+void worker(std::shared_ptr<ethreads::channel<task>> task_queue,
             std::atomic<bool> &shutdown_flag) {
   task_scheduler::cacheline_size =
       get_cache_line_size(); // cacheline_size is thread_local, so we have to
@@ -89,8 +88,13 @@ void worker(std::shared_ptr<ts_queue<task>> task_queue,
                              // add_batch_tasks works properly when called by
                              // non-main
   while (!shutdown_flag.load(std::memory_order_relaxed)) {
-    if (auto task = task_queue->pop())
-      (*task)();
+    // Use receive_for with timeout to periodically check shutdown flag
+    auto result = task_queue->receive_for(std::chrono::milliseconds(100));
+    if (result) {
+      (*result)();
+    } else if (task_queue->is_closed()) {
+      break;
+    }
   }
 }
 
@@ -101,10 +105,10 @@ void shutdown_coro_workers(task_scheduler &scheduler);
 task_scheduler::task_scheduler() {
   size_t processor_count = std::thread::hardware_concurrency();
   while (processor_count-- > 0) {
-    std::shared_ptr<ts_queue<task>> tsq = std::make_shared<ts_queue<task>>();
-    std::thread thr(worker, tsq, std::ref(shutting_down));
+    auto chan = std::make_shared<ethreads::channel<task>>();
+    std::thread thr(worker, chan, std::ref(shutting_down));
     workers.push_back(worker_info{
-        std::move(thr), std::move(tsq),
+        std::move(thr), std::move(chan),
         std::chrono::high_resolution_clock::now()});
   }
 
@@ -120,9 +124,9 @@ task_scheduler::~task_scheduler() {
   // Shutdown coroutine workers first
   shutdown_coro_workers(*this);
 
-  // Shutdown regular task workers
+  // Shutdown regular task workers - close channels to wake up threads
   for (auto &w : workers) {
-    w.queue->push([]() {}); // Add an empty task to wake up threads
+    w.queue->close();
   }
 
   for (auto &w : workers) {

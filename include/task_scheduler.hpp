@@ -19,8 +19,8 @@
 #include <vector>
 
 #include "coro_task.hpp"
+#include "shared_state/channel.hpp"
 #include "task.hpp"
-#include "ts_queue.hpp"
 #include "ws_deque.hpp"
 
 /*
@@ -36,7 +36,7 @@
 
 struct worker_info {
   std::thread thread;
-  std::shared_ptr<ts_queue<task>> queue;
+  std::shared_ptr<ethreads::channel<task>> queue;
   std::chrono::high_resolution_clock::time_point available_at;
 };
 
@@ -62,7 +62,7 @@ struct task_scheduler {
   std::atomic<std::size_t> coro_worker_index{0};
 
   // Global queue for external coroutine submissions (MPMC-safe)
-  std::shared_ptr<ts_queue<std::coroutine_handle<>>> external_coro_queue;
+  std::shared_ptr<ethreads::channel<std::coroutine_handle<>>> external_coro_queue;
 
   // Thread-local state for coroutine workers
   static thread_local std::size_t cacheline_size;
@@ -172,7 +172,7 @@ task_scheduler::add_task(T &&t, Args &&...args) {
     worker_info *least_busy = &workers[0];
     for (auto &worker : workers) {
       if (now >= worker.available_at) {
-        worker.queue->push(wrapped_task);
+        worker.queue->send(wrapped_task);
         worker.available_at = now + task_duration;
         return future;
       }
@@ -181,7 +181,7 @@ task_scheduler::add_task(T &&t, Args &&...args) {
         least_busy = &worker;
     }
 
-    least_busy->queue->push(wrapped_task);
+    least_busy->queue->send(wrapped_task);
     least_busy->available_at = now + task_duration;
   }
 
