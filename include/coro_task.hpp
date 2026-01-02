@@ -4,6 +4,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <coroutine>
+#include <cstdint>
 #include <exception>
 #include <memory>
 #include <mutex>
@@ -11,6 +12,8 @@
 #include <thread>
 #include <utility>
 #include <variant>
+
+#include "shared_state/continuation_handoff.hpp"
 
 namespace ethreads {
 
@@ -22,9 +25,20 @@ template <typename T> struct coro_shared_state {
   std::variant<std::monostate, T, std::exception_ptr> result;
   std::atomic<bool> ready{false};
   std::atomic<bool> final_suspend_reached{false};
-  std::coroutine_handle<> continuation{nullptr};
+  std::atomic<bool> detached_{false};  // For non-blocking destructor
   std::mutex mutex;
   std::condition_variable cv;
+
+  // Lock-free continuation handoff primitive
+  continuation_handoff handoff_;
+
+  // Delegate to handoff primitive
+  bool try_set_finished() { return handoff_.set_ready(); }
+  std::coroutine_handle<> try_set_continuation(std::coroutine_handle<> h) {
+    return handoff_.set_continuation(h);
+  }
+  std::coroutine_handle<> get_continuation() const { return handoff_.get_continuation(); }
+  bool is_finished() const { return handoff_.is_ready(); }
 
   void set_value(T value) {
     {
@@ -33,8 +47,6 @@ template <typename T> struct coro_shared_state {
       ready.store(true, std::memory_order_release);
     }
     cv.notify_all();
-    // Note: continuation is resumed via final_awaiter symmetric transfer,
-    // not here. Scheduling here would cause double-resume.
   }
 
   void set_exception(std::exception_ptr e) {
@@ -44,8 +56,6 @@ template <typename T> struct coro_shared_state {
       ready.store(true, std::memory_order_release);
     }
     cv.notify_all();
-    // Note: continuation is resumed via final_awaiter symmetric transfer,
-    // not here. Scheduling here would cause double-resume.
   }
 
   T get() {
@@ -65,9 +75,20 @@ template <> struct coro_shared_state<void> {
   std::optional<std::exception_ptr> exception;
   std::atomic<bool> ready{false};
   std::atomic<bool> final_suspend_reached{false};
-  std::coroutine_handle<> continuation{nullptr};
+  std::atomic<bool> detached_{false};  // For non-blocking destructor
   std::mutex mutex;
   std::condition_variable cv;
+
+  // Lock-free continuation handoff primitive
+  continuation_handoff handoff_;
+
+  // Delegate to handoff primitive
+  bool try_set_finished() { return handoff_.set_ready(); }
+  std::coroutine_handle<> try_set_continuation(std::coroutine_handle<> h) {
+    return handoff_.set_continuation(h);
+  }
+  std::coroutine_handle<> get_continuation() const { return handoff_.get_continuation(); }
+  bool is_finished() const { return handoff_.is_ready(); }
 
   void set_value() {
     {
@@ -75,8 +96,6 @@ template <> struct coro_shared_state<void> {
       ready.store(true, std::memory_order_release);
     }
     cv.notify_all();
-    // Note: continuation is resumed via final_awaiter symmetric transfer,
-    // not here. Scheduling here would cause double-resume.
   }
 
   void set_exception(std::exception_ptr e) {
@@ -86,8 +105,6 @@ template <> struct coro_shared_state<void> {
       ready.store(true, std::memory_order_release);
     }
     cv.notify_all();
-    // Note: continuation is resumed via final_awaiter symmetric transfer,
-    // not here. Scheduling here would cause double-resume.
   }
 
   void get() {
@@ -123,12 +140,23 @@ public:
       std::coroutine_handle<>
       await_suspend(std::coroutine_handle<promise_type> h) noexcept {
         auto &promise = h.promise();
-        // Signal that we've reached final_suspend before transferring control
+        // Signal that we've reached final_suspend
         promise.state->final_suspend_reached.store(true,
                                                    std::memory_order_release);
-        if (promise.state->continuation) {
-          return promise.state->continuation;
+
+        // Single atomic determines who resumes continuation
+        if (promise.state->try_set_finished()) {
+          // We're responsible for resuming - symmetric transfer
+          return promise.state->get_continuation();
         }
+
+        // Check if task was detached (destructor called while running)
+        if (promise.state->detached_.load(std::memory_order_acquire)) {
+          h.destroy();
+          return std::noop_coroutine();
+        }
+
+        // No continuation yet, await_suspend will handle it
         return std::noop_coroutine();
       }
 
@@ -165,20 +193,28 @@ public:
   }
 
   ~coro_task() {
-    // Only destroy if the coroutine is done to avoid double-free
     if (handle_) {
-      // Wait for coroutine to complete before destroying
-      if (state_ && !state_->is_ready()) {
-        state_->get(); // Block until done
-      }
-      // After state is ready, the coroutine may still be between set_value()
-      // and final_suspend(). Wait for final_suspend to be reached.
-      if (state_) {
-        while (!state_->final_suspend_reached.load(std::memory_order_acquire)) {
+      if (state_ && state_->is_finished()) {
+        // Task finished, safe to destroy after final_suspend_reached
+        for (int i = 0; i < 1000 &&
+             !state_->final_suspend_reached.load(std::memory_order_acquire); ++i) {
           std::this_thread::yield();
         }
+        handle_.destroy();
+      } else if (state_ && !state_->is_ready()) {
+        // Task still running - detach and let it self-cleanup
+        state_->detached_.store(true, std::memory_order_release);
+        handle_ = nullptr;
+      } else {
+        // Task ready but not finished - brief wait for final_suspend
+        if (state_) {
+          for (int i = 0; i < 1000 &&
+               !state_->final_suspend_reached.load(std::memory_order_acquire); ++i) {
+            std::this_thread::yield();
+          }
+        }
+        handle_.destroy();
       }
-      handle_.destroy();
     }
   }
 
@@ -188,10 +224,18 @@ public:
   }
 
   std::coroutine_handle<> await_suspend(std::coroutine_handle<> awaiting) {
-    state_->continuation = awaiting;
-    if (!started_.load()) {
+    // Start task if not already started
+    if (!started_.exchange(true, std::memory_order_acq_rel)) {
       schedule_coro_handle(handle_);
     }
+
+    // Single atomic determines who resumes
+    auto to_resume = state_->try_set_continuation(awaiting);
+    if (to_resume && to_resume != std::noop_coroutine()) {
+      // Task already finished, schedule ourselves
+      schedule_coro_handle(awaiting);
+    }
+
     return std::noop_coroutine();
   }
 
@@ -252,12 +296,23 @@ public:
       std::coroutine_handle<>
       await_suspend(std::coroutine_handle<promise_type> h) noexcept {
         auto &promise = h.promise();
-        // Signal that we've reached final_suspend before transferring control
+        // Signal that we've reached final_suspend
         promise.state->final_suspend_reached.store(true,
                                                    std::memory_order_release);
-        if (promise.state->continuation) {
-          return promise.state->continuation;
+
+        // Single atomic determines who resumes continuation
+        if (promise.state->try_set_finished()) {
+          // We're responsible for resuming - symmetric transfer
+          return promise.state->get_continuation();
         }
+
+        // Check if task was detached (destructor called while running)
+        if (promise.state->detached_.load(std::memory_order_acquire)) {
+          h.destroy();
+          return std::noop_coroutine();
+        }
+
+        // No continuation yet, await_suspend will handle it
         return std::noop_coroutine();
       }
 
@@ -293,20 +348,28 @@ public:
   }
 
   ~coro_task() {
-    // Only destroy if the coroutine is done to avoid double-free
     if (handle_) {
-      // Wait for coroutine to complete before destroying
-      if (state_ && !state_->is_ready()) {
-        state_->get(); // Block until done
-      }
-      // After state is ready, the coroutine may still be between set_value()
-      // and final_suspend(). Wait for final_suspend to be reached.
-      if (state_) {
-        while (!state_->final_suspend_reached.load(std::memory_order_acquire)) {
+      if (state_ && state_->is_finished()) {
+        // Task finished, safe to destroy after final_suspend_reached
+        for (int i = 0; i < 1000 &&
+             !state_->final_suspend_reached.load(std::memory_order_acquire); ++i) {
           std::this_thread::yield();
         }
+        handle_.destroy();
+      } else if (state_ && !state_->is_ready()) {
+        // Task still running - detach and let it self-cleanup
+        state_->detached_.store(true, std::memory_order_release);
+        handle_ = nullptr;
+      } else {
+        // Task ready but not finished - brief wait for final_suspend
+        if (state_) {
+          for (int i = 0; i < 1000 &&
+               !state_->final_suspend_reached.load(std::memory_order_acquire); ++i) {
+            std::this_thread::yield();
+          }
+        }
+        handle_.destroy();
       }
-      handle_.destroy();
     }
   }
 
@@ -315,10 +378,18 @@ public:
   }
 
   std::coroutine_handle<> await_suspend(std::coroutine_handle<> awaiting) {
-    state_->continuation = awaiting;
-    if (!started_.load()) {
+    // Start task if not already started
+    if (!started_.exchange(true, std::memory_order_acq_rel)) {
       schedule_coro_handle(handle_);
     }
+
+    // Single atomic determines who resumes
+    auto to_resume = state_->try_set_continuation(awaiting);
+    if (to_resume && to_resume != std::noop_coroutine()) {
+      // Task already finished, schedule ourselves
+      schedule_coro_handle(awaiting);
+    }
+
     return std::noop_coroutine();
   }
 

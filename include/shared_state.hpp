@@ -35,5 +35,6 @@
 #include "shared_state/event.hpp"
 #include "shared_state/barrier.hpp"
 #include "shared_state/channel.hpp"
+#include "shared_state/continuation_handoff.hpp"
 
 #endif // ETHREADS_SHARED_STATE_HPP
