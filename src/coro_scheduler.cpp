@@ -24,17 +24,28 @@ static void coro_worker(coro_worker_info &info) {
   while (!scheduler.shutting_down.load(std::memory_order_acquire)) {
     // 1. Try to get work from own queue (LIFO - better cache locality)
     if (auto handle = my_queue.pop()) {
-      // Check for valid, non-noop, non-done handle
-      if (*handle && *handle != std::noop_coroutine() && !handle->done()) {
-        handle->resume();
+      // Validate handle before resuming
+      if (*handle && handle->address() != nullptr &&
+          *handle != std::noop_coroutine() && !handle->done()) {
+        try {
+          handle->resume();
+        } catch (...) {
+          // Swallow exceptions from coroutine - they should be handled via promise
+        }
       }
       continue;
     }
 
     // 2. Check external queue (submissions from non-worker threads)
     if (auto handle = external_queue.try_receive()) {
-      if (*handle && *handle != std::noop_coroutine() && !handle->done()) {
-        handle->resume();
+      // Validate handle before resuming
+      if (*handle && handle->address() != nullptr &&
+          *handle != std::noop_coroutine() && !handle->done()) {
+        try {
+          handle->resume();
+        } catch (...) {
+          // Swallow exceptions from coroutine - they should be handled via promise
+        }
       }
       continue;
     }
@@ -53,8 +64,14 @@ static void coro_worker(coro_worker_info &info) {
 
         auto &victim_queue = *scheduler.coro_workers[victim_id].coro_queue;
         if (auto stolen = victim_queue.steal()) {
-          if (*stolen && *stolen != std::noop_coroutine() && !stolen->done()) {
-            stolen->resume();
+          // Validate handle before resuming
+          if (*stolen && stolen->address() != nullptr &&
+              *stolen != std::noop_coroutine() && !stolen->done()) {
+            try {
+              stolen->resume();
+            } catch (...) {
+              // Swallow exceptions from coroutine - they should be handled via promise
+            }
             found_work = true;
           }
         }
@@ -70,7 +87,14 @@ static void coro_worker(coro_worker_info &info) {
 
 // Schedule a coroutine handle on coroutine workers
 void task_scheduler::schedule_coro_handle(std::coroutine_handle<> handle) {
-  if (!handle || handle.done()) {
+  // Validate handle
+  if (!handle || handle.address() == nullptr || handle.done()) {
+    return;
+  }
+
+  // Extra check for obviously invalid addresses
+  uintptr_t addr = reinterpret_cast<uintptr_t>(handle.address());
+  if (addr < 0x1000) {  // Likely null/garbage pointer
     return;
   }
 
@@ -78,14 +102,22 @@ void task_scheduler::schedule_coro_handle(std::coroutine_handle<> handle) {
   if (shutting_down.load(std::memory_order_acquire)) {
     // Run inline during shutdown
     if (!handle.done()) {
-      handle.resume();
+      try {
+        handle.resume();
+      } catch (...) {
+        // Swallow - should be handled in promise
+      }
     }
     return;
   }
 
   if (coro_workers.empty()) {
     // No coroutine workers, run inline (fallback)
-    handle.resume();
+    try {
+      handle.resume();
+    } catch (...) {
+      // Swallow - should be handled in promise
+    }
     return;
   }
 

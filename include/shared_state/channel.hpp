@@ -56,8 +56,10 @@ class sync_channel
   std::condition_variable_any send_cv_;
 
   void on_close() {
+    typename base_type::lock_type lock(this->mutex_);
     this->notify_all();
     send_cv_.notify_all();
+    // lock released by RAII after notify
   }
 
   bool can_send() const {
@@ -90,8 +92,8 @@ public:
       throw std::runtime_error("send on closed channel");
     }
     buffer_.push_back(std::move(value));
-    lock.unlock();
     this->notify_one();
+    // lock released by RAII after notify
   }
 
   // Try to send without blocking
@@ -106,9 +108,9 @@ public:
       }
     }
     buffer_.push_back(std::move(value));
-    lock.unlock();
     this->notify_one();
     return true;
+    // lock released by RAII after notify
   }
 
   // Send with timeout (only meaningful for bounded channels)
@@ -126,9 +128,9 @@ public:
       return false;
     }
     buffer_.push_back(std::move(value));
-    lock.unlock();
     this->notify_one();
     return true;
+    // lock released by RAII after notify
   }
 
   // Receive a value (blocking)
@@ -143,8 +145,8 @@ public:
     T value = std::move(buffer_.front());
     buffer_.pop_front();
     if constexpr (is_bounded) {
-      lock.unlock();
       send_cv_.notify_one();
+      // lock released by RAII after notify
     }
     return value;
   }
@@ -158,8 +160,8 @@ public:
     T value = std::move(buffer_.front());
     buffer_.pop_front();
     if constexpr (is_bounded) {
-      lock.unlock();
       send_cv_.notify_one();
+      // lock released by RAII after notify
     }
     return value;
   }
@@ -179,8 +181,8 @@ public:
     T value = std::move(buffer_.front());
     buffer_.pop_front();
     if constexpr (is_bounded) {
-      lock.unlock();
       send_cv_.notify_one();
+      // lock released by RAII after notify
     }
     return {std::move(value), channel_op_status::success};
   }

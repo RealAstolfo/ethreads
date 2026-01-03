@@ -73,14 +73,13 @@ public:
 
   // Release n permits
   void release(std::ptrdiff_t n = 1) {
-    {
-      typename base_type::lock_type lock(this->mutex_);
-      count_ += n;
-    }
+    typename base_type::lock_type lock(this->mutex_);
+    count_ += n;
     // Wake up to n waiters
     for (std::ptrdiff_t i = 0; i < n; ++i) {
       this->notify_one();
     }
+    // lock released by RAII after notify
   }
 
   // Get current available count

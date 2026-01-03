@@ -45,12 +45,11 @@ public:
 
   // Store new value
   void store(T value) {
-    {
-      typename base_type::lock_type lock(this->mutex_);
-      value_ = std::move(value);
-      this->increment_version();
-    }
+    typename base_type::lock_type lock(this->mutex_);
+    value_ = std::move(value);
+    this->increment_version();
     this->notify_all();
+    // lock released by RAII after notify
   }
 
   // Try store (always succeeds for shared_value)
@@ -61,14 +60,12 @@ public:
 
   // Atomic exchange
   T exchange(T new_value) {
-    T old;
-    {
-      typename base_type::lock_type lock(this->mutex_);
-      old = std::move(value_);
-      value_ = std::move(new_value);
-      this->increment_version();
-    }
+    typename base_type::lock_type lock(this->mutex_);
+    T old = std::move(value_);
+    value_ = std::move(new_value);
+    this->increment_version();
     this->notify_all();
+    // lock released by RAII after notify
     return old;
   }
 
@@ -78,8 +75,8 @@ public:
     if (value_ == expected) {
       value_ = std::move(desired);
       this->increment_version();
-      lock.unlock();
       this->notify_all();
+      // lock released by RAII after notify
       return true;
     }
     expected = value_;
@@ -90,25 +87,23 @@ public:
   template <typename Func>
     requires std::invocable<Func, T &>
   void modify(Func &&func) {
-    {
-      typename base_type::lock_type lock(this->mutex_);
-      std::invoke(std::forward<Func>(func), value_);
-      this->increment_version();
-    }
+    typename base_type::lock_type lock(this->mutex_);
+    std::invoke(std::forward<Func>(func), value_);
+    this->increment_version();
     this->notify_all();
+    // lock released by RAII after notify
   }
 
   // Modify and return result
   template <typename Func>
     requires std::invocable<Func, T &>
   auto modify_and_get(Func &&func) -> std::invoke_result_t<Func, T &> {
-    std::invoke_result_t<Func, T &> result;
-    {
-      typename base_type::lock_type lock(this->mutex_);
-      result = std::invoke(std::forward<Func>(func), value_);
-      this->increment_version();
-    }
+    typename base_type::lock_type lock(this->mutex_);
+    std::invoke_result_t<Func, T &> result =
+        std::invoke(std::forward<Func>(func), value_);
+    this->increment_version();
     this->notify_all();
+    // lock released by RAII after notify
     return result;
   }
 

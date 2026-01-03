@@ -32,15 +32,14 @@ public:
 
   // Set the event (signal)
   void set() {
-    {
-      typename base_type::lock_type lock(this->mutex_);
-      signaled_ = true;
-    }
+    typename base_type::lock_type lock(this->mutex_);
+    signaled_ = true;
     if constexpr (is_auto_reset) {
       this->notify_one(); // Auto-reset wakes one waiter
     } else {
       this->notify_all(); // Manual reset wakes all waiters
     }
+    // lock released by RAII after notify
   }
 
   // Reset the event (unsignal)

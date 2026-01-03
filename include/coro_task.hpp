@@ -2,6 +2,7 @@
 #define ETHREADS_CORO_TASK_HPP
 
 #include <atomic>
+#include <cassert>
 #include <condition_variable>
 #include <coroutine>
 #include <cstdint>
@@ -41,21 +42,19 @@ template <typename T> struct coro_shared_state {
   bool is_finished() const { return handoff_.is_ready(); }
 
   void set_value(T value) {
-    {
-      std::lock_guard lock(mutex);
-      result = std::move(value);
-      ready.store(true, std::memory_order_release);
-    }
+    std::lock_guard lock(mutex);
+    result = std::move(value);
+    ready.store(true, std::memory_order_release);
     cv.notify_all();
+    // lock released by RAII after notify
   }
 
   void set_exception(std::exception_ptr e) {
-    {
-      std::lock_guard lock(mutex);
-      result = e;
-      ready.store(true, std::memory_order_release);
-    }
+    std::lock_guard lock(mutex);
+    result = e;
+    ready.store(true, std::memory_order_release);
     cv.notify_all();
+    // lock released by RAII after notify
   }
 
   T get() {
@@ -91,20 +90,18 @@ template <> struct coro_shared_state<void> {
   bool is_finished() const { return handoff_.is_ready(); }
 
   void set_value() {
-    {
-      std::lock_guard lock(mutex);
-      ready.store(true, std::memory_order_release);
-    }
+    std::lock_guard lock(mutex);
+    ready.store(true, std::memory_order_release);
     cv.notify_all();
+    // lock released by RAII after notify
   }
 
   void set_exception(std::exception_ptr e) {
-    {
-      std::lock_guard lock(mutex);
-      exception = e;
-      ready.store(true, std::memory_order_release);
-    }
+    std::lock_guard lock(mutex);
+    exception = e;
+    ready.store(true, std::memory_order_release);
     cv.notify_all();
+    // lock released by RAII after notify
   }
 
   void get() {
@@ -140,24 +137,29 @@ public:
       std::coroutine_handle<>
       await_suspend(std::coroutine_handle<promise_type> h) noexcept {
         auto &promise = h.promise();
-        // Signal that we've reached final_suspend
-        promise.state->final_suspend_reached.store(true,
-                                                   std::memory_order_release);
+
+        // Determine continuation BEFORE signaling completion
+        std::coroutine_handle<> continuation = std::noop_coroutine();
 
         // Single atomic determines who resumes continuation
         if (promise.state->try_set_finished()) {
           // We're responsible for resuming - symmetric transfer
-          return promise.state->get_continuation();
+          continuation = promise.state->get_continuation();
         }
 
-        // Check if task was detached (destructor called while running)
+        // Signal completion - destructor waits for this before setting detached
+        promise.state->final_suspend_reached.store(true,
+                                                   std::memory_order_release);
+
+        // CRITICAL: Check detached AFTER setting final_suspend_reached
+        // This is the synchronization point with the destructor
+        // If detached is set, destructor is waiting and we must self-destruct
         if (promise.state->detached_.load(std::memory_order_acquire)) {
           h.destroy();
           return std::noop_coroutine();
         }
 
-        // No continuation yet, await_suspend will handle it
-        return std::noop_coroutine();
+        return continuation;
       }
 
       void await_resume() noexcept {}
@@ -179,41 +181,44 @@ public:
   coro_task(coro_task &&other) noexcept
       : handle_(std::exchange(other.handle_, nullptr)),
         state_(std::move(other.state_)),
-        started_(other.started_.load()) {}
+        started_(other.started_.load(std::memory_order_acquire)) {
+    // Moving a started task is unsafe - the coroutine may be running
+    assert(!started_.load(std::memory_order_relaxed) &&
+           "Cannot move a started coro_task - coroutine may be running");
+  }
 
   coro_task &operator=(coro_task &&other) noexcept {
     if (this != &other) {
+      // Moving a started task is unsafe - the coroutine may be running
+      assert(!other.started_.load(std::memory_order_acquire) &&
+             "Cannot move a started coro_task - coroutine may be running");
       if (handle_)
         handle_.destroy();
       handle_ = std::exchange(other.handle_, nullptr);
       state_ = std::move(other.state_);
-      started_.store(other.started_.load());
+      started_.store(other.started_.load(std::memory_order_acquire),
+                     std::memory_order_release);
     }
     return *this;
   }
 
   ~coro_task() {
     if (handle_) {
-      if (state_ && state_->is_finished()) {
-        // Task finished, safe to destroy after final_suspend_reached
-        for (int i = 0; i < 1000 &&
-             !state_->final_suspend_reached.load(std::memory_order_acquire); ++i) {
+      if (!started_.load(std::memory_order_acquire)) {
+        // Task never started - safe to destroy immediately
+        handle_.destroy();
+      } else if (state_) {
+        // Task was started - need to coordinate with final_awaiter
+        // Wait for final_suspend to be reached
+        while (!state_->final_suspend_reached.load(std::memory_order_acquire)) {
           std::this_thread::yield();
         }
-        handle_.destroy();
-      } else if (state_ && !state_->is_ready()) {
-        // Task still running - detach and let it self-cleanup
+        // Signal coroutine to self-destruct
+        // The coroutine checks detached AFTER setting final_suspend_reached
+        // so this store will be seen by the coroutine
         state_->detached_.store(true, std::memory_order_release);
+        // Coroutine will destroy itself, we just clear our handle
         handle_ = nullptr;
-      } else {
-        // Task ready but not finished - brief wait for final_suspend
-        if (state_) {
-          for (int i = 0; i < 1000 &&
-               !state_->final_suspend_reached.load(std::memory_order_acquire); ++i) {
-            std::this_thread::yield();
-          }
-        }
-        handle_.destroy();
       }
     }
   }
@@ -232,8 +237,8 @@ public:
     // Single atomic determines who resumes
     auto to_resume = state_->try_set_continuation(awaiting);
     if (to_resume && to_resume != std::noop_coroutine()) {
-      // Task already finished, schedule ourselves
-      schedule_coro_handle(awaiting);
+      // Task already finished - use symmetric transfer to resume immediately
+      return awaiting;
     }
 
     return std::noop_coroutine();
@@ -296,24 +301,29 @@ public:
       std::coroutine_handle<>
       await_suspend(std::coroutine_handle<promise_type> h) noexcept {
         auto &promise = h.promise();
-        // Signal that we've reached final_suspend
-        promise.state->final_suspend_reached.store(true,
-                                                   std::memory_order_release);
+
+        // Determine continuation BEFORE signaling completion
+        std::coroutine_handle<> continuation = std::noop_coroutine();
 
         // Single atomic determines who resumes continuation
         if (promise.state->try_set_finished()) {
           // We're responsible for resuming - symmetric transfer
-          return promise.state->get_continuation();
+          continuation = promise.state->get_continuation();
         }
 
-        // Check if task was detached (destructor called while running)
+        // Signal completion - destructor waits for this before setting detached
+        promise.state->final_suspend_reached.store(true,
+                                                   std::memory_order_release);
+
+        // CRITICAL: Check detached AFTER setting final_suspend_reached
+        // This is the synchronization point with the destructor
+        // If detached is set, destructor is waiting and we must self-destruct
         if (promise.state->detached_.load(std::memory_order_acquire)) {
           h.destroy();
           return std::noop_coroutine();
         }
 
-        // No continuation yet, await_suspend will handle it
-        return std::noop_coroutine();
+        return continuation;
       }
 
       void await_resume() noexcept {}
@@ -334,41 +344,44 @@ public:
   coro_task(coro_task &&other) noexcept
       : handle_(std::exchange(other.handle_, nullptr)),
         state_(std::move(other.state_)),
-        started_(other.started_.load()) {}
+        started_(other.started_.load(std::memory_order_acquire)) {
+    // Moving a started task is unsafe - the coroutine may be running
+    assert(!started_.load(std::memory_order_relaxed) &&
+           "Cannot move a started coro_task - coroutine may be running");
+  }
 
   coro_task &operator=(coro_task &&other) noexcept {
     if (this != &other) {
+      // Moving a started task is unsafe - the coroutine may be running
+      assert(!other.started_.load(std::memory_order_acquire) &&
+             "Cannot move a started coro_task - coroutine may be running");
       if (handle_)
         handle_.destroy();
       handle_ = std::exchange(other.handle_, nullptr);
       state_ = std::move(other.state_);
-      started_.store(other.started_.load());
+      started_.store(other.started_.load(std::memory_order_acquire),
+                     std::memory_order_release);
     }
     return *this;
   }
 
   ~coro_task() {
     if (handle_) {
-      if (state_ && state_->is_finished()) {
-        // Task finished, safe to destroy after final_suspend_reached
-        for (int i = 0; i < 1000 &&
-             !state_->final_suspend_reached.load(std::memory_order_acquire); ++i) {
+      if (!started_.load(std::memory_order_acquire)) {
+        // Task never started - safe to destroy immediately
+        handle_.destroy();
+      } else if (state_) {
+        // Task was started - need to coordinate with final_awaiter
+        // Wait for final_suspend to be reached
+        while (!state_->final_suspend_reached.load(std::memory_order_acquire)) {
           std::this_thread::yield();
         }
-        handle_.destroy();
-      } else if (state_ && !state_->is_ready()) {
-        // Task still running - detach and let it self-cleanup
+        // Signal coroutine to self-destruct
+        // The coroutine checks detached AFTER setting final_suspend_reached
+        // so this store will be seen by the coroutine
         state_->detached_.store(true, std::memory_order_release);
+        // Coroutine will destroy itself, we just clear our handle
         handle_ = nullptr;
-      } else {
-        // Task ready but not finished - brief wait for final_suspend
-        if (state_) {
-          for (int i = 0; i < 1000 &&
-               !state_->final_suspend_reached.load(std::memory_order_acquire); ++i) {
-            std::this_thread::yield();
-          }
-        }
-        handle_.destroy();
       }
     }
   }
@@ -386,8 +399,8 @@ public:
     // Single atomic determines who resumes
     auto to_resume = state_->try_set_continuation(awaiting);
     if (to_resume && to_resume != std::noop_coroutine()) {
-      // Task already finished, schedule ourselves
-      schedule_coro_handle(awaiting);
+      // Task already finished - use symmetric transfer to resume immediately
+      return awaiting;
     }
 
     return std::noop_coroutine();

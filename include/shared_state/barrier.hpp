@@ -78,8 +78,8 @@ public:
     count_ -= n;
     if (count_ == 0) {
       complete_phase();
-      lock.unlock();
       this->notify_all();
+      // lock released by RAII after notify
     }
     return arrival_token{current_phase};
   }
@@ -103,8 +103,8 @@ public:
     --count_;
     if (count_ == 0) {
       complete_phase();
-      lock.unlock();
       this->notify_all();
+      // lock released by RAII after notify
     }
   }
 
