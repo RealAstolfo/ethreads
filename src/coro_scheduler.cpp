@@ -78,9 +78,11 @@ static void coro_worker(coro_worker_info &info) {
       }
     }
 
-    // 4. If no work found, yield briefly to avoid busy-waiting
+    // 4. If no work found, block on condition variable until notified
     if (!found_work) {
-      std::this_thread::yield();
+      std::unique_lock<std::mutex> lock(scheduler.coro_work_mutex);
+      scheduler.coro_work_cv.wait(lock);
+      // After waking (from work submission or shutdown), continue loop
     }
   }
 }
@@ -127,6 +129,9 @@ void task_scheduler::schedule_coro_handle(std::coroutine_handle<> handle) {
   // waiting for work that's in our own queue.
   // The local queue is used for work-stealing and continuations only.
   external_coro_queue->send(handle);
+
+  // Wake one sleeping worker to process the new work
+  coro_work_cv.notify_one();
 }
 
 // Schedule a regular task on the task pool
@@ -186,8 +191,8 @@ void init_coro_workers(task_scheduler &scheduler) {
 void shutdown_coro_workers(task_scheduler &scheduler) {
   // Note: shutting_down flag is already set by caller
 
-  // Give workers a moment to notice shutdown
-  std::this_thread::yield();
+  // Wake all workers that are waiting on the condition variable
+  scheduler.coro_work_cv.notify_all();
 
   // Close the external queue to wake up any blocked workers
   scheduler.external_coro_queue->close();

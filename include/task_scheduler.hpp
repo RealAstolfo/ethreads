@@ -12,6 +12,7 @@
 #include <iterator>
 #include <memory>
 #include <mutex>
+#include <condition_variable>
 #include <random>
 #include <thread>
 #include <unordered_map>
@@ -63,6 +64,10 @@ struct task_scheduler {
 
   // Global queue for external coroutine submissions (MPMC-safe)
   std::shared_ptr<ethreads::channel<std::coroutine_handle<>>> external_coro_queue;
+
+  // Condition variable for coroutine workers to block when no work available
+  std::mutex coro_work_mutex;
+  std::condition_variable coro_work_cv;
 
   // Thread-local state for coroutine workers
   static thread_local std::size_t cacheline_size;

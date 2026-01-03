@@ -149,8 +149,27 @@ helgrind-coro: coro-test-valgrind
 helgrind-async: async-runtime-test-valgrind
 	valgrind --tool=helgrind --suppressions=valgrind.supp ./async-runtime-test-valgrind
 
+#########################################################################################
+# Profiling Builds (optimized with frame pointers for accurate stack traces)
+#########################################################################################
+
+CFLAGS_PROFILE = -march=native -O3 -g -fno-omit-frame-pointer -Wall -Wextra -pedantic $(INC)
+CXXFLAGS_PROFILE = $(CFLAGS_PROFILE) -std=c++23
+
+task-scheduler-profile.o:
+	${CXX} ${CXXFLAGS_PROFILE} -c src/task_scheduler.cpp -o $@
+
+coro-scheduler-profile.o:
+	${CXX} ${CXXFLAGS_PROFILE} -c src/coro_scheduler.cpp -o $@
+
+async-runtime-profile.o:
+	${CXX} ${CXXFLAGS_PROFILE} -c src/async_runtime.cpp -o $@
+
+threading-profile.o: task-scheduler-profile.o coro-scheduler-profile.o async-runtime-profile.o
+	ld -r $^ -o $@
+
 all: threading-test coro-test fib-benchmark async-runtime-test fib-coro-main shared-state-test threading.a
 
 clean:
-	-rm -f threading-test coro-test fib-benchmark async-runtime-test shared-state-test builds/threading.a *.o
+	-rm -f threading-test coro-test fib-benchmark async-runtime-test shared-state-test builds/threading.a *.o *-profile.o
 	-rm -f threading-test-valgrind coro-test-valgrind async-runtime-test-valgrind fib-coro-main
