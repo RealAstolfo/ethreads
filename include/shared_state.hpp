@@ -28,6 +28,8 @@
 #include "shared_state/concepts.hpp"
 #include "shared_state/policies.hpp"
 #include "shared_state/crtp_base.hpp"
+#include "shared_state/timed_awaiter.hpp"
+#include "cancellation.hpp"
 
 // Primitive headers
 #include "shared_state/shared_value.hpp"

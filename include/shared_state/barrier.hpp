@@ -1,6 +1,7 @@
 #ifndef ETHREADS_SHARED_STATE_BARRIER_HPP
 #define ETHREADS_SHARED_STATE_BARRIER_HPP
 
+#include <chrono>
 #include <cstddef>
 #include <functional>
 
@@ -88,6 +89,15 @@ public:
   void wait(arrival_token token) {
     typename base_type::lock_type lock(this->mutex_);
     this->wait_for_condition(lock, [this, &token] { return phase_ != token.phase(); });
+  }
+
+  // Wait for phase with timeout — returns false on timeout
+  template <typename Rep, typename Period>
+  bool wait_for(arrival_token token,
+                std::chrono::duration<Rep, Period> timeout) {
+    typename base_type::lock_type lock(this->mutex_);
+    return this->wait_for_condition_for(
+        lock, [this, &token] { return phase_ != token.phase(); }, timeout);
   }
 
   // Arrive and wait in one operation

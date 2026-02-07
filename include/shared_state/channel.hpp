@@ -9,6 +9,7 @@
 #include "concepts.hpp"
 #include "crtp_base.hpp"
 #include "policies.hpp"
+#include "timed_awaiter.hpp"
 
 namespace ethreads {
 
@@ -313,7 +314,15 @@ class async_channel
                                               std::memory_order_release,
                                               std::memory_order_acquire)) {
         if (head->handle) {
-          schedule_coro_handle(head->handle);
+          if (head->gate) {
+            bool expected = false;
+            if (head->gate->compare_exchange_strong(
+                    expected, true, std::memory_order_acq_rel)) {
+              schedule_coro_handle(head->handle);
+            }
+          } else {
+            schedule_coro_handle(head->handle);
+          }
         }
         return;
       }
@@ -361,7 +370,15 @@ public:
     while (head != nullptr) {
       waiter_node *next = head->next;
       if (head->handle) {
-        schedule_coro_handle(head->handle);
+        if (head->gate) {
+          bool expected = false;
+          if (head->gate->compare_exchange_strong(
+                  expected, true, std::memory_order_acq_rel)) {
+            schedule_coro_handle(head->handle);
+          }
+        } else {
+          schedule_coro_handle(head->handle);
+        }
       }
       head = next;
     }
@@ -376,6 +393,20 @@ public:
   // Async receive - returns awaiter
   auto receive_async() {
     return channel_receive_awaiter<T, BoundednessPolicy, LockPolicy>(*this);
+  }
+
+  // Async receive with timeout
+  template <typename Rep, typename Period>
+  auto receive_async_for(std::chrono::duration<Rep, Period> timeout) {
+    return timed_channel_receive_awaiter<T, BoundednessPolicy, LockPolicy>(
+        *this, std::chrono::steady_clock::now() + timeout);
+  }
+
+  // Async send with timeout
+  template <typename Rep, typename Period>
+  auto send_async_for(T value, std::chrono::duration<Rep, Period> timeout) {
+    return timed_channel_send_awaiter<T, BoundednessPolicy, LockPolicy>(
+        *this, std::move(value), std::chrono::steady_clock::now() + timeout);
   }
 
   // Add waiter for send notifications

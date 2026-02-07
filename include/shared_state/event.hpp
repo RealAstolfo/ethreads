@@ -6,6 +6,7 @@
 #include "concepts.hpp"
 #include "crtp_base.hpp"
 #include "policies.hpp"
+#include "timed_awaiter.hpp"
 
 namespace ethreads {
 
@@ -178,6 +179,13 @@ public:
 
   // Async wait - returns awaiter
   auto wait_async() { return event_wait_awaiter<ResetPolicy, LockPolicy>(*this); }
+
+  // Async wait with timeout — returns true if signaled, false on timeout
+  template <typename Rep, typename Period>
+  auto wait_async_for(std::chrono::duration<Rep, Period> timeout) {
+    return timed_event_wait_awaiter<ResetPolicy, LockPolicy>(
+        *this, std::chrono::steady_clock::now() + timeout);
+  }
 
   // co_await support
   auto operator co_await() { return wait_async(); }

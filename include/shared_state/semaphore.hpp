@@ -8,6 +8,7 @@
 #include "concepts.hpp"
 #include "crtp_base.hpp"
 #include "policies.hpp"
+#include "timed_awaiter.hpp"
 
 namespace ethreads {
 
@@ -164,6 +165,13 @@ public:
   // Async acquire - returns awaiter
   auto acquire_async() {
     return semaphore_acquire_awaiter<LeastMaxValue, LockPolicy>(*this);
+  }
+
+  // Async acquire with timeout — returns true if acquired, false on timeout
+  template <typename Rep, typename Period>
+  auto acquire_async_for(std::chrono::duration<Rep, Period> timeout) {
+    return timed_semaphore_acquire_awaiter<LeastMaxValue, LockPolicy>(
+        *this, std::chrono::steady_clock::now() + timeout);
   }
 
   // co_await support

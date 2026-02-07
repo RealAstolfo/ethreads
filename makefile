@@ -27,7 +27,10 @@ coro-scheduler.o:
 async-runtime.o:
 	${CXX} ${CXXFLAGS} -c src/async_runtime.cpp -o $@
 
-threading.o: task-scheduler.o coro-scheduler.o async-runtime.o
+timer-service.o:
+	${CXX} ${CXXFLAGS} -c src/timer_service.cpp -o $@
+
+threading.o: task-scheduler.o coro-scheduler.o async-runtime.o timer-service.o
 	ld -r $^ -o $@
 
 #########################################################################################
@@ -117,7 +120,10 @@ coro-scheduler-debug.o:
 async-runtime-debug.o:
 	${CXX_DEBUG} ${CXXFLAGS_DEBUG} -c src/async_runtime.cpp -o $@
 
-threading-debug.o: task-scheduler-debug.o coro-scheduler-debug.o async-runtime-debug.o
+timer-service-debug.o:
+	${CXX_DEBUG} ${CXXFLAGS_DEBUG} -c src/timer_service.cpp -o $@
+
+threading-debug.o: task-scheduler-debug.o coro-scheduler-debug.o async-runtime-debug.o timer-service-debug.o
 	ld -r $^ -o $@
 
 threading-tester-debug.o:
@@ -165,7 +171,10 @@ coro-scheduler-profile.o:
 async-runtime-profile.o:
 	${CXX} ${CXXFLAGS_PROFILE} -c src/async_runtime.cpp -o $@
 
-threading-profile.o: task-scheduler-profile.o coro-scheduler-profile.o async-runtime-profile.o
+timer-service-profile.o:
+	${CXX} ${CXXFLAGS_PROFILE} -c src/timer_service.cpp -o $@
+
+threading-profile.o: task-scheduler-profile.o coro-scheduler-profile.o async-runtime-profile.o timer-service-profile.o
 	ld -r $^ -o $@
 
 all: threading-test coro-test fib-benchmark async-runtime-test fib-coro-main shared-state-test threading.a

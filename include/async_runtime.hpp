@@ -8,9 +8,199 @@
 
 #include "task_scheduler.hpp"
 #include "coro_task.hpp"
+#include "coro_awaiter.hpp"
+#include "cancellation.hpp"
+#include "sleep.hpp"
 #include "yield.hpp"
+#include "select.hpp"
 
 namespace ethreads {
+
+// =============================================================================
+// Blocking Result for cancellable run_blocking
+// =============================================================================
+
+enum class blocking_status { completed, cancelled };
+
+template <typename T> struct blocking_result {
+  blocking_status status;
+  std::optional<T> value;
+  std::exception_ptr exception;
+
+  T get() {
+    if (exception)
+      std::rethrow_exception(exception);
+    if (status == blocking_status::cancelled)
+      throw cancelled_exception{};
+    return std::move(*value);
+  }
+};
+
+template <> struct blocking_result<void> {
+  blocking_status status;
+  std::exception_ptr exception;
+
+  void get() {
+    if (exception)
+      std::rethrow_exception(exception);
+    if (status == blocking_status::cancelled)
+      throw cancelled_exception{};
+  }
+};
+
+// =============================================================================
+// Cancellable Blocking Awaiter
+// =============================================================================
+
+template <typename Result, typename Callable, typename... Args>
+class cancellable_blocking_awaiter {
+  struct shared_data {
+    std::atomic<bool> resumed{false};
+    std::coroutine_handle<> handle{nullptr};
+    std::optional<Result> result;
+    std::exception_ptr exception;
+    blocking_status status{blocking_status::completed};
+  };
+
+public:
+  cancellable_blocking_awaiter(cancellation_token token, Callable &&c,
+                                Args &&...a)
+      : token_(std::move(token)), callable_(std::forward<Callable>(c)),
+        args_(std::forward<Args>(a)...),
+        data_(std::make_shared<shared_data>()) {}
+
+  bool await_ready() const noexcept { return false; }
+
+  void await_suspend(std::coroutine_handle<> h) {
+    data_->handle = h;
+
+    auto data = data_;
+    auto token = token_;
+
+    // Register cancellation callback
+    if (auto state = token.state()) {
+      callback_id_ = state->register_callback([data]() {
+        bool expected = false;
+        if (data->resumed.compare_exchange_strong(expected, true,
+                                                   std::memory_order_acq_rel)) {
+          data->status = blocking_status::cancelled;
+          schedule_coro_handle(data->handle);
+        }
+      });
+    }
+
+    // Schedule work on pool
+    auto task = [data, callable = callable_, args = args_]() mutable {
+      try {
+        if constexpr (std::is_void_v<Result>) {
+          std::apply(callable, std::move(args));
+        } else {
+          data->result = std::apply(callable, std::move(args));
+        }
+      } catch (...) {
+        data->exception = std::current_exception();
+      }
+
+      bool expected = false;
+      if (data->resumed.compare_exchange_strong(expected, true,
+                                                 std::memory_order_acq_rel)) {
+        data->status = blocking_status::completed;
+        schedule_coro_handle(data->handle);
+      }
+    };
+
+    schedule_task_on_pool(std::move(task));
+  }
+
+  blocking_result<Result> await_resume() {
+    // Unregister callback
+    if (auto state = token_.state()) {
+      if (callback_id_ != 0)
+        state->unregister_callback(callback_id_);
+    }
+
+    return blocking_result<Result>{data_->status, std::move(data_->result),
+                                    data_->exception};
+  }
+
+private:
+  cancellation_token token_;
+  Callable callable_;
+  std::tuple<Args...> args_;
+  std::shared_ptr<shared_data> data_;
+  std::size_t callback_id_{0};
+};
+
+// Void specialization
+template <typename Callable, typename... Args>
+class cancellable_blocking_awaiter<void, Callable, Args...> {
+  struct shared_data {
+    std::atomic<bool> resumed{false};
+    std::coroutine_handle<> handle{nullptr};
+    std::exception_ptr exception;
+    blocking_status status{blocking_status::completed};
+  };
+
+public:
+  cancellable_blocking_awaiter(cancellation_token token, Callable &&c,
+                                Args &&...a)
+      : token_(std::move(token)), callable_(std::forward<Callable>(c)),
+        args_(std::forward<Args>(a)...),
+        data_(std::make_shared<shared_data>()) {}
+
+  bool await_ready() const noexcept { return false; }
+
+  void await_suspend(std::coroutine_handle<> h) {
+    data_->handle = h;
+
+    auto data = data_;
+    auto token = token_;
+
+    if (auto state = token.state()) {
+      callback_id_ = state->register_callback([data]() {
+        bool expected = false;
+        if (data->resumed.compare_exchange_strong(expected, true,
+                                                   std::memory_order_acq_rel)) {
+          data->status = blocking_status::cancelled;
+          schedule_coro_handle(data->handle);
+        }
+      });
+    }
+
+    auto task = [data, callable = callable_, args = args_]() mutable {
+      try {
+        std::apply(callable, std::move(args));
+      } catch (...) {
+        data->exception = std::current_exception();
+      }
+
+      bool expected = false;
+      if (data->resumed.compare_exchange_strong(expected, true,
+                                                 std::memory_order_acq_rel)) {
+        data->status = blocking_status::completed;
+        schedule_coro_handle(data->handle);
+      }
+    };
+
+    schedule_task_on_pool(std::move(task));
+  }
+
+  blocking_result<void> await_resume() {
+    if (auto state = token_.state()) {
+      if (callback_id_ != 0)
+        state->unregister_callback(callback_id_);
+    }
+
+    return blocking_result<void>{data_->status, data_->exception};
+  }
+
+private:
+  cancellation_token token_;
+  Callable callable_;
+  std::tuple<Args...> args_;
+  std::shared_ptr<shared_data> data_;
+  std::size_t callback_id_{0};
+};
 
 // =============================================================================
 // Async Runtime - Coroutine-first execution environment
@@ -71,6 +261,25 @@ public:
         std::remove_if(detached_tasks_.begin(), detached_tasks_.end(),
                        [](auto &check) { return check(); }),
         detached_tasks_.end());
+  }
+
+  // Run a blocking callable on the thread pool, resume coroutine when done
+  template <typename Callable, typename... Args>
+  auto run_blocking(Callable &&callable, Args &&...args) {
+    return make_awaiter(std::forward<Callable>(callable),
+                        std::forward<Args>(args)...);
+  }
+
+  // Cancellable variant: resumes coroutine early on cancellation.
+  // Pool thread continues to completion (result discarded).
+  template <typename Callable, typename... Args>
+  auto run_blocking(cancellation_token token, Callable &&callable,
+                    Args &&...args) {
+    using result_type = std::invoke_result_t<Callable, Args...>;
+    return cancellable_blocking_awaiter<result_type, std::decay_t<Callable>,
+                                        std::decay_t<Args>...>(
+        std::move(token), std::forward<Callable>(callable),
+        std::forward<Args>(args)...);
   }
 
 private:

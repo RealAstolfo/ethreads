@@ -102,6 +102,12 @@ void worker(std::shared_ptr<ethreads::channel<task>> task_queue,
 void init_coro_workers(task_scheduler &scheduler);
 void shutdown_coro_workers(task_scheduler &scheduler);
 
+// Forward declarations from timer_service.cpp
+namespace ethreads {
+void init_timer_service();
+void shutdown_timer_service();
+}
+
 task_scheduler::task_scheduler() {
   size_t processor_count = std::thread::hardware_concurrency();
   while (processor_count-- > 0) {
@@ -116,12 +122,18 @@ task_scheduler::task_scheduler() {
 
   // Initialize coroutine workers
   init_coro_workers(*this);
+
+  // Initialize timer service
+  ethreads::init_timer_service();
 }
 
 task_scheduler::~task_scheduler() {
   shutting_down.store(true, std::memory_order_relaxed);
 
-  // Shutdown coroutine workers first
+  // Shutdown timer service first (fires remaining timers)
+  ethreads::shutdown_timer_service();
+
+  // Shutdown coroutine workers
   shutdown_coro_workers(*this);
 
   // Shutdown regular task workers - close channels to wake up threads

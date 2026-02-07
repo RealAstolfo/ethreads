@@ -24,6 +24,7 @@ void schedule_coro_handle(std::coroutine_handle<> handle);
 struct waiter_node {
   std::coroutine_handle<> handle{nullptr};
   waiter_node *next{nullptr};
+  std::atomic<bool> *gate{nullptr}; // If set, CAS before scheduling (for timed awaiters)
 
   explicit waiter_node(std::coroutine_handle<> h) : handle(h), next(nullptr) {}
 };
@@ -103,7 +104,16 @@ protected:
                                          std::memory_order_release,
                                          std::memory_order_acquire)) {
         if (head->handle) {
-          schedule_coro_handle(head->handle);
+          if (head->gate) {
+            // Gated node (timed awaiter): CAS before scheduling
+            bool expected = false;
+            if (head->gate->compare_exchange_strong(
+                    expected, true, std::memory_order_acq_rel)) {
+              schedule_coro_handle(head->handle);
+            }
+          } else {
+            schedule_coro_handle(head->handle);
+          }
         }
         return true;
       }
@@ -118,7 +128,15 @@ protected:
     while (head != nullptr) {
       waiter_node *next = head->next;
       if (head->handle) {
-        schedule_coro_handle(head->handle);
+        if (head->gate) {
+          bool expected = false;
+          if (head->gate->compare_exchange_strong(
+                  expected, true, std::memory_order_acq_rel)) {
+            schedule_coro_handle(head->handle);
+          }
+        } else {
+          schedule_coro_handle(head->handle);
+        }
       }
       head = next;
     }
