@@ -1,13 +1,11 @@
 #include "timer_service.hpp"
+#include "task_scheduler.hpp"
 #include "cancellation.hpp"
 
 #include <algorithm>
 #include <thread>
 
 namespace ethreads {
-
-// Forward declaration for scheduler integration
-void schedule_coro_handle(std::coroutine_handle<> handle);
 
 timer_service::timer_service() : thread_([this] { run(); }) {}
 
