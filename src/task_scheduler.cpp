@@ -108,6 +108,12 @@ void init_timer_service();
 void shutdown_timer_service();
 }
 
+// Forward declarations from io_uring_service.cpp
+namespace ethreads {
+void init_io_uring_service();
+void shutdown_io_uring_service();
+}
+
 task_scheduler::task_scheduler() {
   size_t processor_count = std::thread::hardware_concurrency();
   while (processor_count-- > 0) {
@@ -125,12 +131,18 @@ task_scheduler::task_scheduler() {
 
   // Initialize timer service
   ethreads::init_timer_service();
+
+  // Initialize io_uring service
+  ethreads::init_io_uring_service();
 }
 
 task_scheduler::~task_scheduler() {
   shutting_down.store(true, std::memory_order_relaxed);
 
-  // Shutdown timer service first (fires remaining timers)
+  // Shutdown io_uring service (cancels in-flight I/O)
+  ethreads::shutdown_io_uring_service();
+
+  // Shutdown timer service (fires remaining timers)
   ethreads::shutdown_timer_service();
 
   // Shutdown coroutine workers

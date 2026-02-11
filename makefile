@@ -30,7 +30,10 @@ async-runtime.o:
 timer-service.o:
 	${CXX} ${CXXFLAGS} -c src/timer_service.cpp -o $@
 
-threading.o: task-scheduler.o coro-scheduler.o async-runtime.o timer-service.o
+io-uring-service.o:
+	${CXX} ${CXXFLAGS} -c src/io_uring_service.cpp -o $@ -luring
+
+threading.o: task-scheduler.o coro-scheduler.o async-runtime.o timer-service.o io-uring-service.o
 	ld -r $^ -o $@
 
 #########################################################################################
@@ -123,7 +126,10 @@ async-runtime-debug.o:
 timer-service-debug.o:
 	${CXX_DEBUG} ${CXXFLAGS_DEBUG} -c src/timer_service.cpp -o $@
 
-threading-debug.o: task-scheduler-debug.o coro-scheduler-debug.o async-runtime-debug.o timer-service-debug.o
+io-uring-service-debug.o:
+	${CXX_DEBUG} ${CXXFLAGS_DEBUG} -c src/io_uring_service.cpp -o $@ -luring
+
+threading-debug.o: task-scheduler-debug.o coro-scheduler-debug.o async-runtime-debug.o timer-service-debug.o io-uring-service-debug.o
 	ld -r $^ -o $@
 
 threading-tester-debug.o:
@@ -174,7 +180,10 @@ async-runtime-profile.o:
 timer-service-profile.o:
 	${CXX} ${CXXFLAGS_PROFILE} -c src/timer_service.cpp -o $@
 
-threading-profile.o: task-scheduler-profile.o coro-scheduler-profile.o async-runtime-profile.o timer-service-profile.o
+io-uring-service-profile.o:
+	${CXX} ${CXXFLAGS_PROFILE} -c src/io_uring_service.cpp -o $@ -luring
+
+threading-profile.o: task-scheduler-profile.o coro-scheduler-profile.o async-runtime-profile.o timer-service-profile.o io-uring-service-profile.o
 	ld -r $^ -o $@
 
 all: threading-test coro-test fib-benchmark async-runtime-test fib-coro-main shared-state-test threading.a
