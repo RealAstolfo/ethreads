@@ -10,7 +10,7 @@ namespace ethreads {
 static constexpr unsigned RING_ENTRIES = 256;
 
 io_uring_service::io_uring_service() {
-  ring_ = new struct io_uring{};
+  ring_ = new ::io_uring();
 
   struct io_uring_params params{};
   params.flags = IORING_SETUP_COOP_TASKRUN;
@@ -76,7 +76,7 @@ void io_uring_service::run() {
     if (comp) {
       comp->result = cqe->res;
       comp->flags = cqe->flags;
-      ::schedule_coro_handle(comp->handle);
+      schedule_coro_handle(comp->handle);
     }
     // comp == nullptr is our shutdown NOP — just consume it
 
