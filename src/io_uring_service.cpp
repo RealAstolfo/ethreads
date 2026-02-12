@@ -4,6 +4,8 @@
 #include <liburing.h>
 #include <cerrno>
 #include <cstdio>
+#include <memory>
+#include <vector>
 
 namespace ethreads {
 
@@ -32,6 +34,14 @@ io_uring_service::~io_uring_service() { shutdown(); }
 io_uring_sqe* io_uring_service::get_sqe() {
   if (!ring_) return nullptr;
   return io_uring_get_sqe(ring_);
+}
+
+std::pair<io_uring_sqe*, io_uring_sqe*> io_uring_service::get_sqe_pair() {
+  if (!ring_) return {nullptr, nullptr};
+  auto* a = io_uring_get_sqe(ring_);
+  auto* b = io_uring_get_sqe(ring_);
+  if (!a || !b) return {nullptr, nullptr};
+  return {a, b};
 }
 
 int io_uring_service::submit() {
@@ -84,21 +94,31 @@ void io_uring_service::run() {
   }
 }
 
-// Global instance — same pattern as timer_service
-static io_uring_service* g_io_uring_service = nullptr;
+// Per-thread ring pool: one ring per coro_worker + one fallback for non-worker threads
+static std::vector<std::unique_ptr<io_uring_service>> g_rings;
+static thread_local io_uring_service* tl_ring = nullptr;
 
-io_uring_service& get_io_uring_service() { return *g_io_uring_service; }
+io_uring_service& get_io_uring_service() {
+  if (tl_ring) return *tl_ring;
+  if (task_scheduler::is_coro_worker)
+    tl_ring = g_rings[task_scheduler::current_coro_worker_id].get();
+  else
+    tl_ring = g_rings.back().get();  // fallback ring for non-worker threads
+  return *tl_ring;
+}
 
 void init_io_uring_service() {
-  g_io_uring_service = new io_uring_service();
+  size_t n = std::thread::hardware_concurrency();
+  g_rings.reserve(n + 1);  // n workers + 1 fallback
+  for (size_t i = 0; i <= n; i++)
+    g_rings.push_back(std::make_unique<io_uring_service>());
 }
 
 void shutdown_io_uring_service() {
-  if (g_io_uring_service) {
-    g_io_uring_service->shutdown();
-    delete g_io_uring_service;
-    g_io_uring_service = nullptr;
-  }
+  for (auto& ring : g_rings)
+    ring->shutdown();
+  // Don't clear vector — ring objects stay valid (ring_=nullptr after shutdown)
+  // so any late get_sqe() returns nullptr safely
 }
 
 } // namespace ethreads

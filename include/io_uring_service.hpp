@@ -5,6 +5,7 @@
 #include <coroutine>
 #include <cstdint>
 #include <thread>
+#include <utility>
 
 struct io_uring;         // forward-declare liburing's ring type
 struct io_uring_sqe;
@@ -29,8 +30,12 @@ public:
   io_uring_service(const io_uring_service&) = delete;
   io_uring_service& operator=(const io_uring_service&) = delete;
 
-  // Get an SQE slot.  Returns nullptr if the ring is full.
+  // Get an SQE slot.  Returns nullptr if the ring is full or shut down.
   io_uring_sqe* get_sqe();
+
+  // Get two SQE slots atomically (for linked timeout ops).
+  // Returns {nullptr, nullptr} if ring is full/shut down.
+  std::pair<io_uring_sqe*, io_uring_sqe*> get_sqe_pair();
 
   // Submit all pending SQEs to the kernel (batched single syscall).
   int submit();
