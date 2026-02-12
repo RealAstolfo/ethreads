@@ -75,7 +75,13 @@ void timer_service::run() {
         lock.lock();
       }
     } else {
-      cv_.wait_until(lock, earliest.deadline);
+      // Copy deadline to a local — wait_until releases the mutex, and
+      // another thread's add_timer() can trigger vector reallocation,
+      // freeing the buffer that `earliest` references.  The libstdc++
+      // wait_until reads __atime again after re-acquiring the mutex to
+      // check for timeout, so passing a dangling reference is UB.
+      auto deadline = earliest.deadline;
+      cv_.wait_until(lock, deadline);
     }
   }
 }
