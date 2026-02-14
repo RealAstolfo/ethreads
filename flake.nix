@@ -23,7 +23,7 @@
           src = ./.;
 
           nativeBuildInputs = with pkgs; [ zig gnumake ];
-          buildInputs = with pkgs; [ liburing ];
+          buildInputs = with pkgs; [ liburing mimalloc ];
 
           postUnpack = ''
             rm -rf $sourceRoot/vendors
@@ -59,6 +59,7 @@
             gnumake
             valgrind
             liburing
+            mimalloc
           ];
 
           shellHook = ''

@@ -33,7 +33,10 @@ timer-service.o:
 io-uring-service.o:
 	${CXX} ${CXXFLAGS} -c src/io_uring_service.cpp -o $@ -luring
 
-threading.o: task-scheduler.o coro-scheduler.o async-runtime.o timer-service.o io-uring-service.o
+allocator.o:
+	${CXX} ${CXXFLAGS} -c src/allocator.cpp -o $@
+
+threading.o: task-scheduler.o coro-scheduler.o async-runtime.o timer-service.o io-uring-service.o allocator.o
 	ld -r $^ -o $@
 
 #########################################################################################
@@ -45,7 +48,7 @@ threading-tester.o:
 	${CXX} ${CXXFLAGS} -c builds/test/threading_tester.cpp -o $@
 
 threading-test: threading.o threading-tester.o
-	${CXX} ${CXXFLAGS} $^ -o $@
+	${CXX} ${CXXFLAGS} $^ -o $@ -lmimalloc
 
 #########################################################################################
 
@@ -56,7 +59,7 @@ coro-tester.o:
 	${CXX} ${CXXFLAGS} -c builds/test/coro_test.cpp -o $@
 
 coro-test: threading.o coro-tester.o
-	${CXX} ${CXXFLAGS} $^ -o $@
+	${CXX} ${CXXFLAGS} $^ -o $@ -lmimalloc
 
 #########################################################################################
 
@@ -67,7 +70,7 @@ fib-benchmark.o:
 	${CXX} ${CXXFLAGS} -c builds/test/fib_benchmark.cpp -o $@
 
 fib-benchmark: threading.o fib-benchmark.o
-	${CXX} ${CXXFLAGS} $^ -o $@
+	${CXX} ${CXXFLAGS} $^ -o $@ -lmimalloc
 
 #########################################################################################
 
@@ -78,7 +81,7 @@ async-runtime-tester.o:
 	${CXX} ${CXXFLAGS} -c builds/test/async_runtime_test.cpp -o $@
 
 async-runtime-test: threading.o async-runtime-tester.o
-	${CXX} ${CXXFLAGS} $^ -o $@
+	${CXX} ${CXXFLAGS} $^ -o $@ -lmimalloc
 
 #########################################################################################
 
@@ -89,7 +92,7 @@ fib-coro-main.o:
 	${CXX} ${CXXFLAGS} -c builds/test/fib_coro_main.cpp -o $@
 
 fib-coro-main: threading.o fib-coro-main.o
-	${CXX} ${CXXFLAGS} $^ -o $@
+	${CXX} ${CXXFLAGS} $^ -o $@ -lmimalloc
 
 #########################################################################################
 
@@ -100,7 +103,7 @@ shared-state-tester.o:
 	${CXX} ${CXXFLAGS} -c builds/test/shared_state_test.cpp -o $@
 
 shared-state-test: threading.o shared-state-tester.o
-	${CXX} ${CXXFLAGS} $^ -o $@
+	${CXX} ${CXXFLAGS} $^ -o $@ -lmimalloc
 
 #########################################################################################
 
@@ -129,7 +132,10 @@ timer-service-debug.o:
 io-uring-service-debug.o:
 	${CXX_DEBUG} ${CXXFLAGS_DEBUG} -c src/io_uring_service.cpp -o $@ -luring
 
-threading-debug.o: task-scheduler-debug.o coro-scheduler-debug.o async-runtime-debug.o timer-service-debug.o io-uring-service-debug.o
+allocator-debug.o:
+	${CXX_DEBUG} ${CXXFLAGS_DEBUG} -c src/allocator.cpp -o $@
+
+threading-debug.o: task-scheduler-debug.o coro-scheduler-debug.o async-runtime-debug.o timer-service-debug.o io-uring-service-debug.o allocator-debug.o
 	ld -r $^ -o $@
 
 threading-tester-debug.o:
@@ -142,13 +148,13 @@ async-runtime-tester-debug.o:
 	${CXX_DEBUG} ${CXXFLAGS_DEBUG} -c builds/test/async_runtime_test.cpp -o $@
 
 threading-test-valgrind: threading-debug.o threading-tester-debug.o
-	${CXX_DEBUG} ${CXXFLAGS_DEBUG} $^ -o $@
+	${CXX_DEBUG} ${CXXFLAGS_DEBUG} $^ -o $@ -lmimalloc
 
 coro-test-valgrind: threading-debug.o coro-tester-debug.o
-	${CXX_DEBUG} ${CXXFLAGS_DEBUG} $^ -o $@
+	${CXX_DEBUG} ${CXXFLAGS_DEBUG} $^ -o $@ -lmimalloc
 
 async-runtime-test-valgrind: threading-debug.o async-runtime-tester-debug.o
-	${CXX_DEBUG} ${CXXFLAGS_DEBUG} $^ -o $@
+	${CXX_DEBUG} ${CXXFLAGS_DEBUG} $^ -o $@ -lmimalloc
 
 valgrind-all: threading-test-valgrind coro-test-valgrind async-runtime-test-valgrind
 
@@ -183,7 +189,10 @@ timer-service-profile.o:
 io-uring-service-profile.o:
 	${CXX} ${CXXFLAGS_PROFILE} -c src/io_uring_service.cpp -o $@ -luring
 
-threading-profile.o: task-scheduler-profile.o coro-scheduler-profile.o async-runtime-profile.o timer-service-profile.o io-uring-service-profile.o
+allocator-profile.o:
+	${CXX} ${CXXFLAGS_PROFILE} -c src/allocator.cpp -o $@
+
+threading-profile.o: task-scheduler-profile.o coro-scheduler-profile.o async-runtime-profile.o timer-service-profile.o io-uring-service-profile.o allocator-profile.o
 	ld -r $^ -o $@
 
 all: threading-test coro-test fib-benchmark async-runtime-test fib-coro-main shared-state-test threading.a

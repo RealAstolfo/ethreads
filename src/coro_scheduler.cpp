@@ -3,6 +3,8 @@
 #include <random>
 #include <thread>
 
+#include <mimalloc.h>
+
 #include "task_scheduler.hpp"
 
 // Thread-local coroutine worker state
@@ -11,6 +13,7 @@ thread_local bool task_scheduler::is_coro_worker = false;
 
 // Coroutine worker function with work-stealing
 static void coro_worker(coro_worker_info &info) {
+  mi_thread_init();
   task_scheduler::current_coro_worker_id = info.worker_id;
   task_scheduler::is_coro_worker = true;
 
@@ -85,6 +88,7 @@ static void coro_worker(coro_worker_info &info) {
       // After waking (from work submission or shutdown), continue loop
     }
   }
+  mi_thread_done();
 }
 
 // Schedule a coroutine handle on coroutine workers

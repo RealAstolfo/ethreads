@@ -5,7 +5,10 @@
 #include <stddef.h>
 #include <thread>
 
+#include <mimalloc.h>
+
 #include "task_scheduler.hpp"
+#include "allocator.hpp"
 
 constexpr std::size_t DEFAULT_CACHE_LINE_SIZE = 64;
 
@@ -82,6 +85,7 @@ inline std::size_t get_cache_line_size() {
 
 void worker(std::shared_ptr<ethreads::channel<task>> task_queue,
             std::atomic<bool> &shutdown_flag) {
+  mi_thread_init();
   task_scheduler::cacheline_size =
       get_cache_line_size(); // cacheline_size is thread_local, so we have to
                              // initialize it for all threads, that way
@@ -96,6 +100,7 @@ void worker(std::shared_ptr<ethreads::channel<task>> task_queue,
       break;
     }
   }
+  mi_thread_done();
 }
 
 // Forward declarations from coro_scheduler.cpp
@@ -115,6 +120,7 @@ void shutdown_io_uring_service();
 }
 
 task_scheduler::task_scheduler() {
+  ethreads::init_allocator();
   size_t processor_count = std::thread::hardware_concurrency();
   while (processor_count-- > 0) {
     auto chan = std::make_shared<ethreads::channel<task>>();

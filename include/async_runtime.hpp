@@ -13,6 +13,7 @@
 #include "sleep.hpp"
 #include "yield.hpp"
 #include "select.hpp"
+#include "allocator.hpp"
 
 namespace ethreads {
 
@@ -269,6 +270,11 @@ public:
     return make_awaiter(std::forward<Callable>(callable),
                         std::forward<Args>(args)...);
   }
+
+  // Allocator interface
+  static std::pmr::memory_resource* resource() noexcept { return mi_resource(); }
+  static mi_heap_t* heap() noexcept { return thread_heap(); }
+  static mi_arena make_arena() { return mi_arena{}; }
 
   // Cancellable variant: resumes coroutine early on cancellation.
   // Pool thread continues to completion (result discarded).

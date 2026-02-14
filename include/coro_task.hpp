@@ -14,6 +14,8 @@
 #include <utility>
 #include <variant>
 
+#include <mimalloc.h>
+
 #include "shared_state/continuation_handoff.hpp"
 
 namespace ethreads {
@@ -122,6 +124,9 @@ public:
   using handle_type = std::coroutine_handle<promise_type>;
 
   struct promise_type {
+    static void* operator new(std::size_t size) { return mi_malloc(size); }
+    static void operator delete(void* ptr, std::size_t) { mi_free(ptr); }
+
     std::shared_ptr<coro_shared_state<T>> state =
         std::make_shared<coro_shared_state<T>>();
 
@@ -286,6 +291,9 @@ public:
   using handle_type = std::coroutine_handle<promise_type>;
 
   struct promise_type {
+    static void* operator new(std::size_t size) { return mi_malloc(size); }
+    static void operator delete(void* ptr, std::size_t) { mi_free(ptr); }
+
     std::shared_ptr<coro_shared_state<void>> state =
         std::make_shared<coro_shared_state<void>>();
 
