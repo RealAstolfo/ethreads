@@ -168,7 +168,7 @@ public:
 template <typename Derived, typename T> class awaitable_base {
 protected:
   // Derived class must implement:
-  // - bool ready_impl() const
+  // - bool ready_impl() noexcept
   // - void suspend_impl(std::coroutine_handle<> h)
   // - T resume_impl()
 
@@ -176,7 +176,7 @@ protected:
   const Derived &derived() const { return static_cast<const Derived &>(*this); }
 
 public:
-  bool await_ready() const noexcept { return derived().ready_impl(); }
+  bool await_ready() noexcept { return derived().ready_impl(); }
 
   void await_suspend(std::coroutine_handle<> h) { derived().suspend_impl(h); }
 
@@ -190,7 +190,7 @@ protected:
   const Derived &derived() const { return static_cast<const Derived &>(*this); }
 
 public:
-  bool await_ready() const noexcept { return derived().ready_impl(); }
+  bool await_ready() noexcept { return derived().ready_impl(); }
 
   void await_suspend(std::coroutine_handle<> h) { derived().suspend_impl(h); }
 
