@@ -334,6 +334,35 @@ inline coro_task<void> when_all(std::vector<coro_task<void>> tasks) {
 }
 
 // =============================================================================
+// Structured Concurrency: when_all_passive
+// =============================================================================
+//
+// Like when_all but the calling coroutine does NOT participate in work-stealing
+// while waiting. Instead, the wait is offloaded to the blocking pool where the
+// thread sleeps on condition variables (zero CPU). This distributes sub-task
+// work more evenly across coroutine worker threads instead of concentrating it
+// on the calling worker.
+//
+// Use when_all_passive for compute-heavy dispatch (orbital propagation, sensor
+// injection) where even load distribution matters more than minimal latency.
+
+inline coro_task<void> when_all_passive(std::vector<coro_task<void>> tasks) {
+  // Start all tasks on coroutine workers
+  for (auto &t : tasks) {
+    t.start();
+  }
+
+  // Offload the blocking wait to the blocking pool.
+  // The calling coroutine suspends, freeing its worker for other coroutines.
+  // The blocking pool thread sleeps on CVs (zero CPU) until all tasks finish.
+  co_await g_runtime.run_blocking([&tasks]() {
+    for (auto &t : tasks) {
+      t.get(); // blocks on CV until task completes
+    }
+  });
+}
+
+// =============================================================================
 // Structured Concurrency: when_any
 // =============================================================================
 
