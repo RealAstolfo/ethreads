@@ -214,16 +214,15 @@ public:
         handle_.destroy();
       } else if (state_) {
         // Task was started - need to coordinate with final_awaiter
-        // Wait for final_suspend to be reached
+        // Wait for final_suspend to be reached before destroying
         while (!state_->final_suspend_reached.load(std::memory_order_acquire)) {
           std::this_thread::yield();
         }
-        // Signal coroutine to self-destruct
-        // The coroutine checks detached AFTER setting final_suspend_reached
-        // so this store will be seen by the coroutine
-        state_->detached_.store(true, std::memory_order_release);
-        // Coroutine will destroy itself, we just clear our handle
-        handle_ = nullptr;
+        // Coroutine is suspended at final_suspend — destroy the frame.
+        // Once final_suspend_reached is true the coroutine is guaranteed
+        // to be suspended (either at noop_coroutine or after symmetric
+        // transfer to a continuation) and safe to destroy.
+        handle_.destroy();
       }
     }
   }
@@ -380,16 +379,15 @@ public:
         handle_.destroy();
       } else if (state_) {
         // Task was started - need to coordinate with final_awaiter
-        // Wait for final_suspend to be reached
+        // Wait for final_suspend to be reached before destroying
         while (!state_->final_suspend_reached.load(std::memory_order_acquire)) {
           std::this_thread::yield();
         }
-        // Signal coroutine to self-destruct
-        // The coroutine checks detached AFTER setting final_suspend_reached
-        // so this store will be seen by the coroutine
-        state_->detached_.store(true, std::memory_order_release);
-        // Coroutine will destroy itself, we just clear our handle
-        handle_ = nullptr;
+        // Coroutine is suspended at final_suspend — destroy the frame.
+        // Once final_suspend_reached is true the coroutine is guaranteed
+        // to be suspended (either at noop_coroutine or after symmetric
+        // transfer to a continuation) and safe to destroy.
+        handle_.destroy();
       }
     }
   }
