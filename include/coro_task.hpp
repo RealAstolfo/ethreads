@@ -152,17 +152,15 @@ public:
           continuation = promise.state->get_continuation();
         }
 
-        // Signal completion - destructor waits for this before setting detached
+        // Publish completion LAST. ~coro_task() spins on this flag and then
+        // destroys the coroutine frame and shared state, so this store must be
+        // the FINAL access to promise.state from the coroutine -- anything read
+        // afterwards races with that destruction (use-after-free, seen under
+        // TSan). The previous code read detached_ AFTER this store; detached_ is
+        // never actually set anywhere, so that self-destruct branch was dead
+        // code and is removed.
         promise.state->final_suspend_reached.store(true,
                                                    std::memory_order_release);
-
-        // CRITICAL: Check detached AFTER setting final_suspend_reached
-        // This is the synchronization point with the destructor
-        // If detached is set, destructor is waiting and we must self-destruct
-        if (promise.state->detached_.load(std::memory_order_acquire)) {
-          h.destroy();
-          return std::noop_coroutine();
-        }
 
         return continuation;
       }
@@ -318,17 +316,15 @@ public:
           continuation = promise.state->get_continuation();
         }
 
-        // Signal completion - destructor waits for this before setting detached
+        // Publish completion LAST. ~coro_task() spins on this flag and then
+        // destroys the coroutine frame and shared state, so this store must be
+        // the FINAL access to promise.state from the coroutine -- anything read
+        // afterwards races with that destruction (use-after-free, seen under
+        // TSan). The previous code read detached_ AFTER this store; detached_ is
+        // never actually set anywhere, so that self-destruct branch was dead
+        // code and is removed.
         promise.state->final_suspend_reached.store(true,
                                                    std::memory_order_release);
-
-        // CRITICAL: Check detached AFTER setting final_suspend_reached
-        // This is the synchronization point with the destructor
-        // If detached is set, destructor is waiting and we must self-destruct
-        if (promise.state->detached_.load(std::memory_order_acquire)) {
-          h.destroy();
-          return std::noop_coroutine();
-        }
 
         return continuation;
       }
