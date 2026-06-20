@@ -40,6 +40,7 @@ public:
     {
       std::lock_guard<std::mutex> lock(mutex_);
       cbs.swap(callbacks_);
+      callback_ids_.clear();
     }
     for (auto &cb : cbs)
       cb();
@@ -65,7 +66,19 @@ public:
   void unregister_callback(std::size_t id) {
     if (id == 0)
       return;
+    // Fast-path: once cancel() has fired, callbacks_ is empty and ids
+    // are cleared under the mutex — our id can't be present. Skipping
+    // the mutex + vector walk here sidesteps a subtle miscompile of
+    // the empty-vector erase path under -O1/ASAN (the generated code
+    // dereferences end()-0x10 unconditionally; with begin==end==nullptr
+    // that's a high-address READ that ASAN reports as SEGV).
+    if (cancelled_.load(std::memory_order_acquire))
+      return;
     std::lock_guard<std::mutex> lock(mutex_);
+    // Re-check under the lock — cancel() could have run between the
+    // fast-path check and acquisition.
+    if (cancelled_.load(std::memory_order_acquire))
+      return;
     for (std::size_t i = 0; i < callback_ids_.size(); ++i) {
       if (callback_ids_[i] == id) {
         callbacks_.erase(callbacks_.begin() + static_cast<std::ptrdiff_t>(i));

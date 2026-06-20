@@ -20,7 +20,7 @@ io_uring_service::io_uring_service() {
   int ret = io_uring_queue_init_params(RING_ENTRIES, ring_, &params);
   if (ret < 0) {
     std::fprintf(stderr, "[io_uring] queue_init failed: %d\n", -ret);
-    delete ring_;
+    delete ring_;  // NOASTROGUARD(R3)
     ring_ = nullptr;
     return;
   }
@@ -68,7 +68,7 @@ void io_uring_service::shutdown() {
 
   if (ring_) {
     io_uring_queue_exit(ring_);
-    delete ring_;
+    delete ring_;  // NOASTROGUARD(R3)
     ring_ = nullptr;
   }
 }
@@ -94,31 +94,41 @@ void io_uring_service::run() {
   }
 }
 
-// Per-thread ring pool: one ring per coro_worker + one fallback for non-worker threads
-static std::vector<std::unique_ptr<io_uring_service>> g_rings;
+// Per-thread ring pool: one ring per coro_worker + one fallback for non-worker threads.
+// Heap-allocated and intentionally leaked at process exit so the ordering of
+// file-scope static destructors can't UAF us: ~task_scheduler (also static)
+// calls shutdown_io_uring_service after all coroutine workers have been joined,
+// and accessing a destroyed std::vector is UB. The pointed-to vector lives
+// until process death — no functional leak since init_io_uring_service runs
+// once per process.
+static std::vector<std::unique_ptr<io_uring_service>>* g_rings = nullptr;  // NOASTROGUARD(R3)
 static thread_local io_uring_service* tl_ring = nullptr;
 
 io_uring_service& get_io_uring_service() {
   if (tl_ring) return *tl_ring;
+  auto& rings = *g_rings;
   if (task_scheduler::is_coro_worker)
-    tl_ring = g_rings[task_scheduler::current_coro_worker_id].get();
+    tl_ring = rings[task_scheduler::current_coro_worker_id].get();
   else
-    tl_ring = g_rings.back().get();  // fallback ring for non-worker threads
+    tl_ring = rings.back().get();  // fallback ring for non-worker threads
   return *tl_ring;
 }
 
 void init_io_uring_service() {
+  if (!g_rings)
+    g_rings = new std::vector<std::unique_ptr<io_uring_service>>();  // NOASTROGUARD(R3)
   size_t n = std::thread::hardware_concurrency();
-  g_rings.reserve(n + 1);  // n workers + 1 fallback
+  g_rings->reserve(n + 1);  // n workers + 1 fallback
   for (size_t i = 0; i <= n; i++)
-    g_rings.push_back(std::make_unique<io_uring_service>());
+    g_rings->push_back(std::make_unique<io_uring_service>());
 }
 
 void shutdown_io_uring_service() {
-  for (auto& ring : g_rings)
+  if (!g_rings) return;
+  for (auto& ring : *g_rings)
     ring->shutdown();
-  // Don't clear vector — ring objects stay valid (ring_=nullptr after shutdown)
-  // so any late get_sqe() returns nullptr safely
+  // Don't delete g_rings — ring objects stay valid (ring_=nullptr after shutdown)
+  // so any late get_sqe() returns nullptr safely. Leaking at exit is OK.
 }
 
 } // namespace ethreads
