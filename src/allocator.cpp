@@ -1,25 +1,27 @@
 #include "allocator.hpp"
 
 #include <atomic>
+#include <mimalloc.h>
 
 namespace ethreads {
 
 // --- mi_memory_resource ---
 
-void* mi_memory_resource::do_allocate(std::size_t bytes, std::size_t alignment) {
-  void* p = mi_malloc_aligned(bytes, alignment);
+void *mi_memory_resource::do_allocate(std::size_t bytes,
+                                      std::size_t alignment) {
+  void *p = mi_malloc_aligned(bytes, alignment);
   if (!p)
     throw std::bad_alloc();
   return p;
 }
 
-void mi_memory_resource::do_deallocate(void* p, std::size_t /*bytes*/,
+void mi_memory_resource::do_deallocate(void *p, std::size_t /*bytes*/,
                                        std::size_t alignment) {
   mi_free_aligned(p, alignment);
 }
 
 bool mi_memory_resource::do_is_equal(
-    const std::pmr::memory_resource& other) const noexcept {
+    const std::pmr::memory_resource &other) const noexcept {
   return this == &other;
 }
 
@@ -27,7 +29,7 @@ bool mi_memory_resource::do_is_equal(
 
 static mi_memory_resource g_mi_resource;
 
-std::pmr::memory_resource* mi_resource() noexcept { return &g_mi_resource; }
+std::pmr::memory_resource *mi_resource() noexcept { return &g_mi_resource; }
 
 // --- init_allocator ---
 
@@ -41,8 +43,9 @@ void init_allocator() {
 }
 
 // --- Thread-local heap ---
-
-mi_heap_t* thread_heap() noexcept { return mi_heap_get_default(); }
+mi_heap_t *thread_heap() noexcept {
+  return (mi_heap_t *)mi_theap_get_default();
+}
 
 // --- mi_arena ---
 
@@ -54,9 +57,9 @@ mi_arena::~mi_arena() {
   }
 }
 
-mi_heap_t* mi_arena::heap() noexcept { return heap_; }
+mi_heap_t *mi_arena::heap() noexcept { return heap_; }
 
-void* mi_arena::allocate(std::size_t size) {
+void *mi_arena::allocate(std::size_t size) {
   return mi_heap_malloc(heap_, size);
 }
 
@@ -66,4 +69,4 @@ void mi_arena::reset() {
   }
 }
 
-}  // namespace ethreads
+} // namespace ethreads
